@@ -39,6 +39,10 @@ SH
   run "$WORK_DIR/verify.sh" "$WORK_DIR/clean.sql.gz"
   if [ "$status" -ne 0 ]; then echo "$output"; fi
   [ "$status" -eq 0 ]
+  printf '#!/usr/bin/env bash\nexit 7\n' > "$WORK_DIR/site-verify.sh"
+  run "$WORK_DIR/verify.sh" "$WORK_DIR/clean.sql.gz"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'Site-specific verification failed'* ]]
   run "$WORK_DIR/verify.sh" "$WORK_DIR/raw.sql.gz"
   [ "$status" -ne 0 ]
 }
@@ -65,6 +69,7 @@ SH
 set -euo pipefail
 [[ "${PLATFORMSH_CLI_TOKEN:-}" == test-secret ]]
 [[ "$1" == db:dump ]]
+[[ " $* " == *' -p test-project '* && " $* " == *' -e test '* && " $* " == *' -A sample-app '* && " $* " == *' -r sample-db '* ]]
 shift
 while (($#)); do
   if [[ "$1" == --file ]]; then printf 'SELECT 1;' | gzip -c > "$2"; exit 0; fi
@@ -73,7 +78,7 @@ done
 exit 1
 SH
   chmod +x "$WORK_DIR/bin/platform"
-  export PATH="$WORK_DIR/bin:$PATH" PLATFORMSH_CLI_TOKEN=test-secret PLATFORM_PROJECT_ID=test-project PLATFORM_ENVIRONMENT=test
+  export PATH="$WORK_DIR/bin:$PATH" PLATFORMSH_CLI_TOKEN=test-secret PLATFORM_PROJECT_ID=test-project PLATFORM_ENVIRONMENT=test PLATFORM_APPLICATION=sample-app PLATFORM_RELATIONSHIP=sample-db
   run "$WORK_DIR/export-platform.sh" "$WORK_DIR/platform.sql.gz"
   [ "$status" -eq 0 ]
   gzip -t "$WORK_DIR/platform.sql.gz"
@@ -89,6 +94,7 @@ SH
 set -euo pipefail
 [[ "${UPSUN_CLI_TOKEN:-}" == upsun-secret ]]
 [[ "$1" == db:dump ]]
+[[ " $* " == *' -p test-project '* && " $* " == *' -e test '* && " $* " == *' -A sample-app '* && " $* " == *' -r sample-db '* ]]
 while (($#)); do
   if [[ "$1" == --file ]]; then printf 'SELECT 1;' | gzip -c > "$2"; exit 0; fi
   shift
@@ -96,7 +102,7 @@ done
 exit 1
 SH
   chmod +x "$WORK_DIR/bin/upsun"
-  export PATH="$WORK_DIR/bin:$PATH" DB_EXPORT_SOURCE=upsun UPSUN_CLI_TOKEN=upsun-secret PLATFORM_PROJECT_ID=test-project PLATFORM_ENVIRONMENT=test
+  export PATH="$WORK_DIR/bin:$PATH" DB_EXPORT_SOURCE=upsun UPSUN_CLI_TOKEN=upsun-secret PLATFORM_PROJECT_ID=test-project PLATFORM_ENVIRONMENT=test PLATFORM_APPLICATION=sample-app PLATFORM_RELATIONSHIP=sample-db
   run "$WORK_DIR/export-platform.sh" "$WORK_DIR/upsun.sql.gz"
   [ "$status" -eq 0 ]
   gzip -t "$WORK_DIR/upsun.sql.gz"
@@ -124,5 +130,47 @@ SH
   gzip -t "$WORK_DIR/quant-plain.sql.gz"
   export BACKUP_URL=http://example.invalid/signed
   run "$WORK_DIR/export-quant.sh" "$WORK_DIR/refused.sql.gz"
+  [ "$status" -ne 0 ]
+  export BACKUP_URL=https://example.invalid/signed
+  : > "$WORK_DIR/empty"
+  export QUANT_FIXTURE="$WORK_DIR/empty"
+  run "$WORK_DIR/export-quant.sh" "$WORK_DIR/empty.sql.gz"
+  [ "$status" -ne 0 ]
+  printf '#!/usr/bin/env bash\nexit 7\n' > "$WORK_DIR/bin/curl"
+  run "$WORK_DIR/export-quant.sh" "$WORK_DIR/error.sql.gz"
+  [ "$status" -ne 0 ]
+}
+
+@test "Quant CLI uses an exact backup and rejects silent missing downloads" {
+  mkdir -p "$WORK_DIR/bin"
+  cat > "$WORK_DIR/bin/quant-cloud" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == backup && "$2" == download && "$3" == bk-fixture ]]
+while (($#)); do
+  if [[ "$1" == --output ]]; then cp "$QUANT_FIXTURE" "$2/snapshot.sql.gz"; exit 0; fi
+  shift
+done
+exit 1
+SH
+  chmod +x "$WORK_DIR/bin/quant-cloud"
+  export PATH="$WORK_DIR/bin:$PATH" QUANT_ORGANIZATION=example QUANT_APPLICATION=app QUANT_ENVIRONMENT=dev QUANT_BACKUP_ID=bk-fixture QUANT_FIXTURE="$WORK_DIR/raw.sql.gz"
+  run "$WORK_DIR/export-quant-cli.sh" "$WORK_DIR/cli.sql.gz"
+  [ "$status" -eq 0 ]
+  gzip -t "$WORK_DIR/cli.sql.gz"
+  printf 'keep' > "$WORK_DIR/existing.sql.gz"
+  chmod 644 "$WORK_DIR/existing.sql.gz"
+  run "$WORK_DIR/export-quant-cli.sh" "$WORK_DIR/existing.sql.gz"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$WORK_DIR/existing.sql.gz")" = keep ]
+  ln -s "$WORK_DIR/existing.sql.gz" "$WORK_DIR/link.sql.gz"
+  run "$WORK_DIR/export-quant-cli.sh" "$WORK_DIR/link.sql.gz"
+  [ "$status" -ne 0 ]
+  export QUANT_BACKUP_ID=latest
+  run "$WORK_DIR/export-quant-cli.sh" "$WORK_DIR/latest.sql.gz"
+  [ "$status" -ne 0 ]
+  export QUANT_BACKUP_ID=bk-fixture
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK_DIR/bin/quant-cloud"
+  run "$WORK_DIR/export-quant-cli.sh" "$WORK_DIR/missing.sql.gz"
   [ "$status" -ne 0 ]
 }

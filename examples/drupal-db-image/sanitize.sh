@@ -4,7 +4,9 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=examples/drupal-db-image/db-lib.sh
 source "$script_dir/db-lib.sh"
-[[ $# == 2 && -s "$1" && "$1" != "$2" ]] || { echo 'Expected distinct input and output dump paths.' >&2; exit 1; }
+[[ $# == 2 && -s "$1" && "$1" != "$2" && ! -e "$2" && ! -L "$2" ]] || { echo 'Expected an input and a new output dump path.' >&2; exit 1; }
+umask 077
+set -o noclobber
 site_hook="$script_dir/site-sanitize.sh"
 [[ -x "$site_hook" ]] || { echo 'Missing executable site-sanitize.sh; site-specific scrubbing is required.' >&2; exit 1; }
 start_db

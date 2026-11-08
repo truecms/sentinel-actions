@@ -2,7 +2,8 @@
 # Usage: export-platform.sh OUTPUT.gz; token stays in the CLI environment.
 set -euo pipefail
 : "${PLATFORM_PROJECT_ID:?}" "${PLATFORM_ENVIRONMENT:?}"
-[[ $# == 1 ]] || { echo 'Expected output path.' >&2; exit 1; }
+[[ $# == 1 && ! -e "$1" && ! -L "$1" ]] || { echo 'Expected a new output file.' >&2; exit 1; }
+umask 077
 case "${DB_EXPORT_SOURCE:-platform}" in
   platform) : "${PLATFORMSH_CLI_TOKEN:?Set PLATFORM_API_TOKEN as a GitHub secret}"; cli=platform ;;
   upsun) : "${UPSUN_CLI_TOKEN:?Set UPSUN_API_TOKEN as a GitHub secret}"; cli=upsun ;;
