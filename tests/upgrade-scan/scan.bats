@@ -103,7 +103,7 @@ scan() { run bash "$ROOT/upgrade-scan/scan.sh"; }
   [ "$status" -eq 0 ]
   ! grep -q '^composer' "$STUB_LOG"
   grep -q 'drush pm:enable upgrade_status --yes' "$STUB_LOG"
-  grep -q 'drush upgrade_status:analyze --all' "$STUB_LOG"
+  grep -q 'drush upgrade_status:analyze --all --ignore-contrib' "$STUB_LOG"
   grep -q "drush sentinel_connector:upgrade-status --scan-report --scan-started=[0-9]*$" "$STUB_LOG"
   grep -q "report env key=set uuid=$UUID api=https://sentinel.example" "$STUB_LOG"
   ! grep -q '^curl' "$STUB_LOG"

@@ -277,8 +277,10 @@ fi
 enabled_modules | comm -13 "$work/modules_before" - > "$work/added_modules"
 
 # 4. The scan. Exit code 3 means it found problems, which is a good scan.
+# Contributed projects are judged from their releases, so only custom code is
+# scanned, as the connector's own scan does.
 log 'Scanning. This can take several minutes.'
-"${drush[@]}" upgrade_status:analyze --all > "$work/analyze.log" 2>&1
+"${drush[@]}" upgrade_status:analyze --all --ignore-contrib > "$work/analyze.log" 2>&1
 code=$?
 if [[ $code -ne 0 && $code -ne 3 ]]; then
   tail -n 20 "$work/analyze.log" >&2
@@ -289,9 +291,12 @@ fi
 
 # 5. Send the stored result. The connector reports scan_failed itself for an
 # incomplete scan, and exits 0 when the scan route is closed.
-# Without a given URL the connector uses its own setting.
-report_env=(SENTINEL_SCAN_KEY="$key" SENTINEL_CONNECTOR_SITE_UUID="$uuid")
-if [[ -n "$api_given" ]]; then
-  report_env+=(SENTINEL_CONNECTOR_API_BASE_URL="$api")
-fi
-env "${report_env[@]}" "${drush[@]}" sentinel_connector:upgrade-status --scan-report --scan-started="$started"
+# Without a given URL the connector uses its own setting. The key is exported
+# in a subshell, never put on a command line where process lists show it.
+(
+  export SENTINEL_SCAN_KEY="$key" SENTINEL_CONNECTOR_SITE_UUID="$uuid"
+  if [[ -n "$api_given" ]]; then
+    export SENTINEL_CONNECTOR_API_BASE_URL="$api"
+  fi
+  "${drush[@]}" sentinel_connector:upgrade-status --scan-report --scan-started="$started"
+)
