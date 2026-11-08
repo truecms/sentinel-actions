@@ -1,0 +1,28 @@
+# .github/workflows/sentinel-upgrade-scan.yml
+# Runs the Sentinel upgrade scan every Monday and when you start it by hand.
+name: Sentinel upgrade scan
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    # Your own site image, and a sanitised copy of your database.
+    container: ghcr.io/your-org/your-site:latest
+    services:
+      database:
+        image: ghcr.io/your-org/your-site-db:latest
+    env:
+      SENTINEL_UPGRADE_SCAN: '1'
+    steps:
+      # Only needed when the image does not already hold the site.
+      - uses: actions/checkout@v5
+      - uses: truecms/sentinel-actions/upgrade-scan@v1.0.0
+        with:
+          site-uuid: 00000000-0000-0000-0000-000000000000
+          scan-key: ${{ secrets.SENTINEL_SCAN_KEY }}
+          # If the image keeps the site elsewhere, for example /app:
+          # working-directory: /app
