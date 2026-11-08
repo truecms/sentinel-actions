@@ -1,4 +1,4 @@
-# Copy to .github/workflows/db-image-refresh.yml in the application repository.
+# Copy this workflow and the example scripts into the application repository.
 name: Build private Drupal database image
 on:
   workflow_dispatch:
@@ -15,35 +15,118 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      DB_EXPORT_SOURCE: ${{ vars.DB_EXPORT_SOURCE }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check project adapters
+        with:
+          persist-credentials: false
+      - name: Check adapters and create private workspace
         run: |
           set -euo pipefail
-          for f in .github/db-image/export.sh .github/db-image/sanitize.sh .github/db-image/verify.sh; do
+          case "$DB_EXPORT_SOURCE" in ssh|platform|upsun|quant) ;; *) echo 'Set DB_EXPORT_SOURCE to ssh, platform, upsun, or quant.' >&2; exit 1;; esac
+          for f in .github/db-image/db-lib.sh .github/db-image/sanitize.sh .github/db-image/verify.sh .github/db-image/site-sanitize.sh .github/db-image/site-verify.sh; do
             test -x "$f" || { echo "Missing executable adapter: $f"; exit 1; }
           done
-      - name: Prepare isolated snapshot
+          umask 077
+          work="$(mktemp -d "$RUNNER_TEMP/db-image.XXXXXXXX")"
+          echo "DB_WORK=$work" >> "$GITHUB_ENV"
+          mkdir -m 700 "$work/context"
+      - name: Install hosting CLI
+        if: env.DB_EXPORT_SOURCE == 'platform' || env.DB_EXPORT_SOURCE == 'upsun'
+        run: |
+          set -euo pipefail
+          if [ "$DB_EXPORT_SOURCE" = upsun ]; then
+            installer=https://upsun.com/cli/installer
+          else
+            installer=https://platform.sh/cli/installer
+          fi
+          curl --fail --silent --show-error --location "$installer" --output "$RUNNER_TEMP/platform-installer.php"
+          php "$RUNNER_TEMP/platform-installer.php"
+          echo "$HOME/.platformsh/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.upsun/bin" >> "$GITHUB_PATH"
+      - name: Create a fresh Quant database backup
+        if: env.DB_EXPORT_SOURCE == 'quant'
+        id: quant-create
+        uses: quantcdn/quant-cloud-environment-backup-action@v4
+        with:
+          api_key: ${{ secrets.QUANT_API_KEY }}
+          organization: ${{ secrets.QUANT_ORGANIZATION }}
+          app_name: ${{ vars.QUANT_APPLICATION }}
+          environment_name: ${{ vars.QUANT_ENVIRONMENT }}
+          operation: create
+          type: database
+          backup_name: db-image-${{ github.run_id }}
+          wait: true
+          wait_interval: 10
+          max_retries: 60
+      - name: Require the created backup ID
+        if: env.DB_EXPORT_SOURCE == 'quant'
+        env:
+          BACKUP_ID: ${{ steps.quant-create.outputs.backup_id }}
+        run: test -n "$BACKUP_ID" || { echo 'Quant did not return a backup ID.' >&2; exit 1; }
+      - name: Get the exact Quant backup
+        if: env.DB_EXPORT_SOURCE == 'quant'
+        id: quant-download
+        uses: quantcdn/quant-cloud-environment-backup-action@v4
+        with:
+          api_key: ${{ secrets.QUANT_API_KEY }}
+          organization: ${{ secrets.QUANT_ORGANIZATION }}
+          app_name: ${{ vars.QUANT_APPLICATION }}
+          environment_name: ${{ vars.QUANT_ENVIRONMENT }}
+          operation: download
+          type: database
+          backup_id: ${{ steps.quant-create.outputs.backup_id }}
+      - name: Download Quant payload
+        if: env.DB_EXPORT_SOURCE == 'quant'
+        env:
+          BACKUP_URL: ${{ steps.quant-download.outputs.download_url }}
+        run: |
+          set -euo pipefail
+          test -n "$BACKUP_URL" || { echo 'Quant did not return a download URL.' >&2; exit 1; }
+          echo "::add-mask::$BACKUP_URL"
+          .github/db-image/export-quant.sh "$DB_WORK/raw.sql.gz"
+      - name: Export from Platform.sh
+        if: env.DB_EXPORT_SOURCE == 'platform'
+        env:
+          PLATFORMSH_CLI_TOKEN: ${{ secrets.PLATFORM_API_TOKEN }}
+          PLATFORM_PROJECT_ID: ${{ vars.PLATFORM_PROJECT_ID }}
+          PLATFORM_ENVIRONMENT: ${{ vars.PLATFORM_ENVIRONMENT }}
+          PLATFORM_APPLICATION: ${{ vars.PLATFORM_APPLICATION }}
+          PLATFORM_RELATIONSHIP: ${{ vars.PLATFORM_RELATIONSHIP }}
+        run: .github/db-image/export-platform.sh "$DB_WORK/raw.sql.gz"
+      - name: Export from Upsun
+        if: env.DB_EXPORT_SOURCE == 'upsun'
+        env:
+          UPSUN_CLI_TOKEN: ${{ secrets.UPSUN_API_TOKEN }}
+          PLATFORM_PROJECT_ID: ${{ vars.PLATFORM_PROJECT_ID }}
+          PLATFORM_ENVIRONMENT: ${{ vars.PLATFORM_ENVIRONMENT }}
+          PLATFORM_APPLICATION: ${{ vars.PLATFORM_APPLICATION }}
+          PLATFORM_RELATIONSHIP: ${{ vars.PLATFORM_RELATIONSHIP }}
+        run: .github/db-image/export-platform.sh "$DB_WORK/raw.sql.gz"
+      - name: Export over SSH
+        if: env.DB_EXPORT_SOURCE == 'ssh'
         env:
           HOST_SSH_KEY: ${{ secrets.DB_EXPORT_SSH_KEY }}
           HOST_KNOWN_HOSTS: ${{ secrets.DB_EXPORT_KNOWN_HOSTS }}
           HOST_TARGET: ${{ vars.DB_EXPORT_SSH_TARGET }}
         run: |
           set -euo pipefail
-          umask 077
-          work="$(mktemp -d "$RUNNER_TEMP/db-image.XXXXXXXX")"
-          echo "DB_WORK=$work" >> "$GITHUB_ENV"
-          mkdir -m 700 "$work/ssh" "$work/context"
-          printf '%s\n' "$HOST_SSH_KEY" > "$work/ssh/id"
-          printf '%s\n' "$HOST_KNOWN_HOSTS" > "$work/ssh/known_hosts"
-          chmod 600 "$work/ssh/id" "$work/ssh/known_hosts"
-          export DB_SSH_KEY_FILE="$work/ssh/id" DB_KNOWN_HOSTS_FILE="$work/ssh/known_hosts"
-          .github/db-image/export.sh "$work/raw.sql.gz"
-          test -s "$work/raw.sql.gz"
-          .github/db-image/sanitize.sh "$work/raw.sql.gz" "$work/context/sanitized.sql.gz"
-          test -s "$work/context/sanitized.sql.gz"
-          .github/db-image/verify.sh "$work/context/sanitized.sql.gz"
-          rm -f "$work/raw.sql.gz" "$work/ssh/id"
+          mkdir -m 700 "$DB_WORK/ssh"
+          printf '%s\n' "$HOST_SSH_KEY" > "$DB_WORK/ssh/id"
+          printf '%s\n' "$HOST_KNOWN_HOSTS" > "$DB_WORK/ssh/known_hosts"
+          chmod 600 "$DB_WORK/ssh/id" "$DB_WORK/ssh/known_hosts"
+          export DB_SSH_KEY_FILE="$DB_WORK/ssh/id" DB_KNOWN_HOSTS_FILE="$DB_WORK/ssh/known_hosts"
+          .github/db-image/export-ssh.sh "$DB_WORK/raw.sql.gz"
+          rm -f "$DB_WORK/ssh/id"
+      - name: Sanitise and independently verify
+        run: |
+          set -euo pipefail
+          test -s "$DB_WORK/raw.sql.gz"
+          .github/db-image/sanitize.sh "$DB_WORK/raw.sql.gz" "$DB_WORK/context/sanitized.sql.gz"
+          test -s "$DB_WORK/context/sanitized.sql.gz"
+          .github/db-image/verify.sh "$DB_WORK/context/sanitized.sql.gz"
+          rm -f "$DB_WORK/raw.sql.gz"
       - name: Confirm package is private before publishing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

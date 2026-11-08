@@ -1,24 +1,53 @@
 # Private Drupal database images for CI
 
-This example builds a MariaDB image containing a sanitised Drupal SQL dump. It is a starting point, not a general-purpose anonymiser. Every site must supply and test its own sanitisation and verification scripts. Never run those scripts against the production database itself. Prefer synthetic data when possible.
+A manually triggered GitHub Actions example that exports a Drupal SQL database, sanitises a disposable copy, independently restores and checks the output, and builds a private GHCR image. Choose SSH, Platform.sh, Upsun or Quant Cloud as the source. These are examples that require project setup and review, not a guarantee that every site's data is safe.
 
-## Before you start
+## Set up the example
 
-1. Create an empty, **private** GHCR container package named `<repository>-drupal-db` (the application repository name in lowercase), connect it to this application repository, and give its Actions workflow package access. Use a separate package for every site and restrict its access. The workflow refuses to push when it cannot confirm the package is private. A first-time package may need a harmless empty image pushed manually to establish it; check its visibility before use. Keep registry permissions limited: anyone who can pull the package can inspect its database layers.
-2. Copy `db-image-refresh.yml` to `.github/workflows/db-image-refresh.yml`; copy `export-ssh.sh` to `.github/db-image/export.sh` and make it executable. Configure the remote command for your host and Drupal installation. It runs on the remote host and writes SQL to stdout; diagnostics must go to stderr. Confirm your host permits the export and the account can do nothing beyond what is required. Replace this adapter with your hosting provider's supported backup API when SSH/Drush is unavailable.
-3. Set the repository variable `DB_EXPORT_SSH_TARGET` to the SSH user and hostname. Set Actions secrets `DB_EXPORT_SSH_KEY` and `DB_EXPORT_KNOWN_HOSTS` to a dedicated read-only key and a host key verified independently with the host provider. The example uses strict host-key checking; never use `ssh-keyscan` without independently verifying its fingerprint. Restrict who can modify and run the workflow and protect the default branch. Do not run it on untrusted pull requests.
-4. Add executable `.github/db-image/sanitize.sh` and `.github/db-image/verify.sh`. The first receives `(raw.sql.gz, sanitized.sql.gz)` and must import the raw dump into a disposable, isolated database, run the project's reviewed sanitiser, then export a new gzip dump. The second receives the sanitized dump and must import it into a fresh disposable database, check that it boots and assert the organisation's privacy rules. Both must exit nonzero on failure; no example script can infer all sensitive fields.
-5. Check the sanitiser and verifier against a representative **synthetic** fixture, including intentional failures. Review users and passwords, sessions, logs, webforms, custom entities, configuration secrets, tokens and backups. Drush `sql:sanitize` can help, but does not establish that every site's custom data is safe. Decide how to handle uploaded files separately; this example does not package files. Document access, retention, expiry, consent and incident response for production-derived data.
-6. Set the MariaDB version in the workflow to match the source and consumer, preferably pin an audited digest. Validate restoration and application tests. Run manually first; enable the schedule after review.
+1. Copy `db-image-refresh.yml` to `.github/workflows/db-image-refresh.yml` and copy all of the example `*.sh` files into `.github/db-image/`. Make them executable (`chmod +x .github/db-image/*.sh`).
+2. Create an empty, **private** GHCR package called `<repository>-drupal-db` (lowercase application repository name), connect it to that repository, and give its Actions workflow access. Use a separate package for each site. The workflow refuses to publish when it cannot prove the package is private. A new package may need a harmless empty image pushed manually first; check privacy before use. Anyone who can pull the image can inspect its layers.
+3. Configure the source in **Settings → Secrets and variables → Actions**, as described below. Protect the workflow and default branch; do not execute it for untrusted pull requests. Tokens belong in **secrets**, not variables or committed files. Grant only the source permissions needed and restrict who can change workflows or read secret-bearing environments.
+4. Implement and review `.github/db-image/site-sanitize.sh` and `site-verify.sh`. Both included files deliberately fail until replaced. They receive the name of a disposable local database container as their only argument. Run SQL inside it with `docker exec "$1" mariadb -uroot -ptemporary-local-only drupal ...`; never use a production connection. The verifier must exit nonzero when any site-specific sensitive data remains. Test both against representative synthetic data, including intentionally failing examples.
+5. Review and match the `DB_IMAGE` in `db-lib.sh` and the image in the workflow to the source database version, preferably using a reviewed digest. Run manually with synthetic data first; enable the commented schedule only after an authorised end-to-end review. Configure hosting-specific network and authentication requirements before using production data.
 
-The raw dump and SSH key live only in a temporary runner directory and are removed on normal success or failure. Use an ephemeral isolated runner; do not upload dumps as artifacts or caches, print contents, or expose them to untrusted workflows. Abrupt runner loss can prevent cleanup. The sanitised SQL is copied into the image, so privacy review is required even after sanitisation. The GHCR privacy check requires a token allowed to read package metadata and is not a substitute for governance or a guarantee against subsequent visibility changes.
+## Choose a source and configure credentials
+
+Set the Actions **variable** `DB_EXPORT_SOURCE` to exactly one of `ssh`, `platform`, `upsun` or `quant`. Only the selected source runs.
+
+| Source | GitHub secrets | GitHub variables | Notes |
+| --- | --- | --- | --- |
+| SSH / Drush | `DB_EXPORT_SSH_KEY`, `DB_EXPORT_KNOWN_HOSTS` | `DB_EXPORT_SSH_TARGET` | Use a dedicated restricted account and independently verify host keys. Adapt the remote Drush command to the site's working directory. |
+| Platform.sh | `PLATFORM_API_TOKEN` | `PLATFORM_PROJECT_ID`, `PLATFORM_ENVIRONMENT`, optional `PLATFORM_APPLICATION`, `PLATFORM_RELATIONSHIP` | The workflow maps the secret to `PLATFORMSH_CLI_TOKEN` for the official `platform` CLI. |
+| Upsun | `UPSUN_API_TOKEN` | `PLATFORM_PROJECT_ID`, `PLATFORM_ENVIRONMENT`, optional `PLATFORM_APPLICATION`, `PLATFORM_RELATIONSHIP` | The workflow maps the secret to `UPSUN_CLI_TOKEN` for the official `upsun` CLI. For Upsun Fixed, use the Platform.sh-compatible CLI if that is what your project supports. |
+| Quant Cloud | `QUANT_API_KEY`, `QUANT_ORGANIZATION` | `QUANT_APPLICATION`, `QUANT_ENVIRONMENT` | The official backup action creates a new database backup, waits for it and downloads the exact returned backup ID. The provider may retain that backup: apply its own retention and access policy. |
+
+The Platform.sh and Upsun CLI installers run in CI before the provider token is passed to the export step. Review vendor installers and versions under your own supply-chain policy. Database access may also require provider-approved SSH certificates, host-key trust, network access and permissions; configure these according to your provider's documentation. Never use unchecked `ssh-keyscan` output as proof of a host key. The Platform.sh, Upsun and Quant integrations are not exercised against live services by this example's automated tests.
+
+For an already authenticated operator, the Quant Cloud CLI can create and download a backup locally with explicit scope and a specific backup ID:
+
+```sh
+quant-cloud backup create --org ORGANISATION --app APPLICATION --env ENVIRONMENT --type database --description 'CI snapshot'
+# Wait for this exact backup to be completed, then use its actual ID:
+quant-cloud backup download BACKUP_ID --org ORGANISATION --app APPLICATION --env ENVIRONMENT --type database --output ./private-temp
+```
+
+Do not choose `latest`: it can refer to a different backup. The workflow uses the vendor's backup action for unattended API-key authentication and the exact-ID handoff rather than assuming that the CLI accepts a token environment variable. Protect and remove local downloads and follow the provider's backup retention policy.
+
+## What the included sanitiser does
+
+`sanitize.sh` imports a gzip SQL dump into an isolated MariaDB container with no network or exposed ports. It verifies that basic Drupal tables exist, blocks user accounts, replaces common user names, emails and password hashes, clears common cache/session/runtime tables, invokes your site-specific scrub, then writes a new gzip SQL dump. `verify.sh` restores that output into a **fresh** isolated database, checks the baseline rules, and invokes your site-specific verifier. Both remove their disposable containers and volumes on normal completion or failure.
+
+Database import output and site-hook output are suppressed because failed SQL and diagnostic output can contain private values. A failed step reports a generic error; investigate with synthetic fixtures or in an approved private environment, not public CI logs. Never enable shell tracing around sensitive data.
+
+This baseline is **not a complete sanitiser**. Drupal sites can store personal information or credentials in content, custom entities, webform submissions, comments, configuration, custom tables, logs, integrations and files. It does not cover those surfaces automatically. Inventory the entire site, scrub or remove every relevant surface, test assertions with intentionally unsafe fixtures, and obtain the data owner's review. Use synthetic data whenever possible. Uploaded files are not included or sanitised by this example. Never run a sanitiser or verifier against production.
+
+The raw dump, provider SSH material and signed URLs are sensitive. Do not print or upload them as artifacts, caches or logs; use an isolated ephemeral runner. The temporary workspace is removed on normal success or failure, but a terminated runner can prevent cleanup. Provider backups may persist after the job. The sanitised SQL remains in image layers, so keep packages private and control retention and access. Review package visibility separately because it can be changed after the pre-push check.
 
 ## Consuming in CI or locally
 
-Authenticate to GHCR with a token authorised to read this specific private package, then pull a reviewed immutable image digest. For example, after logging in with `docker login ghcr.io`:
+Authenticate to GHCR with credentials authorised to read the private package. Pull the reviewed immutable image digest. For example, after `docker login ghcr.io`:
 
 ```sh
-# Replace the owner and digest and use a disposable password.
 image='ghcr.io/OWNER/REPOSITORY-drupal-db@sha256:REPLACE_WITH_DIGEST'
 docker run --rm --name drupal-db-example \
   -e MARIADB_DATABASE=drupal -e MARIADB_USER=drupal \
@@ -26,14 +55,8 @@ docker run --rm --name drupal-db-example \
   "$image"
 ```
 
-The official MariaDB entrypoint imports the compressed SQL only into a **new empty data directory**. The dump must target the configured database and be compatible with the selected server version. Existing volumes are not reinitialised; use a fresh disposable volume and never reuse a production volume. Connect the application to the database using its normal stack configuration, wait for readiness and run its tests. DDEV, Lando and Vortex each have their own database image/import configuration; adapt it rather than assuming a single Compose service name. Do not run production-derived images on untrusted pull requests or share them with unauthorised developers.
+MariaDB imports the compressed SQL only when initialising a **new empty** data directory. Existing volumes keep their old contents; use a fresh disposable volume and never reuse a production volume. Connect your app using its normal stack settings, wait for the database, run your tests and remove the environment. Adapt the configuration to DDEV, Lando, Vortex or Compose. Do not expose the package to untrusted pull requests or unauthorised developers.
 
-A local login generally needs a token with the appropriate GHCR package read permission. GitHub Actions can use `GITHUB_TOKEN` only where the package grants that repository access; other consumers need an appropriately scoped credential. Follow [GitHub's container registry documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+This example publishes to GHCR. A private registry such as Amazon ECR, Docker Hub, Azure Container Registry or Google Artifact Registry can be used after replacing and independently testing the login, permission, privacy check, image naming and push steps; do not assume the GHCR checks apply unchanged. Prefer short-lived scoped credentials where the provider supports them.
 
-## Adapter contract
-
-- `export.sh OUTPUT`: create a non-empty gzip SQL export; use `DB_SSH_KEY_FILE`, `DB_KNOWN_HOSTS_FILE` and `HOST_TARGET` if using the SSH example.
-- `sanitize.sh INPUT OUTPUT`: produce a **new** gzip SQL file from an isolated imported copy, never modify the source database.
-- `verify.sh INPUT`: restore the sanitised file independently and fail unless all site-specific safety and database checks pass.
-
-Do not commit real databases, private keys, host names or customer-specific examples to this repository.
+References: [GitHub Container Registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry), [Platform.sh CLI](https://docs.platform.sh/administration/cli/reference.html), [Upsun CI setup](https://support.platform.sh/hc/en-us/articles/33580745610258-How-to-setup-Github-actions-to-work-with-Platform-sh-environments) and [Drush sanitise](https://www.drush.org/latest/commands/sql_sanitize/).

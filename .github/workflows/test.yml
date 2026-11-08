@@ -15,6 +15,6 @@ jobs:
       - name: Install tools
         run: sudo apt-get update -q && sudo apt-get install -y -q bats shellcheck php-cli
       - name: Shellcheck
-        run: shellcheck scripts/*.sh */scan.sh tests/*/stubs/*
+        run: shellcheck scripts/*.sh */scan.sh tests/*/stubs/* examples/drupal-db-image/*.sh
       - name: Tests
         run: bats tests/*/*.bats
