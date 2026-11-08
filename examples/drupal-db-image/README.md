@@ -4,7 +4,7 @@ This example builds a MariaDB image containing a sanitised Drupal SQL dump. It i
 
 ## Before you start
 
-1. Create an empty, **private** GHCR container package named `drupal-db`, connect it to this application repository, and give its Actions workflow package access. The workflow refuses to push when it cannot confirm the package is private. A first-time package may need a harmless empty image pushed manually to establish it; check its visibility before use. Keep registry permissions limited: anyone who can pull the package can inspect its database layers.
+1. Create an empty, **private** GHCR container package named `<repository>-drupal-db` (the application repository name in lowercase), connect it to this application repository, and give its Actions workflow package access. Use a separate package for every site and restrict its access. The workflow refuses to push when it cannot confirm the package is private. A first-time package may need a harmless empty image pushed manually to establish it; check its visibility before use. Keep registry permissions limited: anyone who can pull the package can inspect its database layers.
 2. Copy `db-image-refresh.yml` to `.github/workflows/db-image-refresh.yml`; copy `export-ssh.sh` to `.github/db-image/export.sh` and make it executable. Configure the remote command for your host and Drupal installation. It runs on the remote host and writes SQL to stdout; diagnostics must go to stderr. Confirm your host permits the export and the account can do nothing beyond what is required. Replace this adapter with your hosting provider's supported backup API when SSH/Drush is unavailable.
 3. Set the repository variable `DB_EXPORT_SSH_TARGET` to the SSH user and hostname. Set Actions secrets `DB_EXPORT_SSH_KEY` and `DB_EXPORT_KNOWN_HOSTS` to a dedicated read-only key and a host key verified independently with the host provider. The example uses strict host-key checking; never use `ssh-keyscan` without independently verifying its fingerprint. Restrict who can modify and run the workflow and protect the default branch. Do not run it on untrusted pull requests.
 4. Add executable `.github/db-image/sanitize.sh` and `.github/db-image/verify.sh`. The first receives `(raw.sql.gz, sanitized.sql.gz)` and must import the raw dump into a disposable, isolated database, run the project's reviewed sanitiser, then export a new gzip dump. The second receives the sanitized dump and must import it into a fresh disposable database, check that it boots and assert the organisation's privacy rules. Both must exit nonzero on failure; no example script can infer all sensitive fields.
@@ -19,7 +19,7 @@ Authenticate to GHCR with a token authorised to read this specific private packa
 
 ```sh
 # Replace the owner and digest and use a disposable password.
-image='ghcr.io/OWNER/drupal-db@sha256:REPLACE_WITH_DIGEST'
+image='ghcr.io/OWNER/REPOSITORY-drupal-db@sha256:REPLACE_WITH_DIGEST'
 docker run --rm --name drupal-db-example \
   -e MARIADB_DATABASE=drupal -e MARIADB_USER=drupal \
   -e MARIADB_PASSWORD=local-only -e MARIADB_ROOT_PASSWORD=local-only \
