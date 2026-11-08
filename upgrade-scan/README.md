@@ -105,14 +105,18 @@ UUID, keep it the same as `SENTINEL_SITE_UUID`.
    enables it. It never changes the versions your lock file holds: if Upgrade
    Status cannot be added without that, it tells Sentinel `install_failed` and
    fails.
-5. It runs `drush upgrade_status:analyze --all`. Exit code 3 means the scan
+5. It runs `drush upgrade_status:analyze --all --ignore-contrib`: only your
+   custom code is scanned, because contributed projects are judged from their
+   releases. Exit code 3 means the scan
    found problems, which is a good scan. Any other failure tells Sentinel
    `scan_failed` and fails.
 6. It runs `drush sentinel_connector:upgrade-status --scan-report`, which sends
    the counts. A custom project with no good scan from this run tells Sentinel
    `scan_failed`.
-7. It uninstalls the modules it turned on, and puts `composer.json` and
-   `composer.lock` back as they were.
+7. It uninstalls the modules it turned on, puts `composer.json` and
+   `composer.lock` back as they were, and reinstalls the packages from the
+   restored lock file if it had added any. If it cannot list the enabled
+   modules before starting, it turns nothing on and fails.
 
 If the scan route is closed on Sentinel, it logs one line and exits 0.
 

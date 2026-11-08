@@ -16,6 +16,8 @@ case "$1" in
     elif [[ "$2" == *ApiBaseUrlResolver* ]]; then [[ -n "${STUB_RESOLVE_FAIL:-}" ]] && exit 1; echo "${STUB_CONNECTOR_URL-${SENTINEL_CONNECTOR_API_BASE_URL-}}";
     elif [[ -n "${STUB_US_MISSING:-}" ]]; then echo no; else echo yes; fi ;;
   pm:list)
+    [[ -n "${STUB_LIST_FAIL:-}" ]] && exit 1
+    if [[ -n "${STUB_LIST_FAIL_AFTER:-}" && -f "$state" ]]; then exit 1; fi
     printf 'node\nsentinel_connector\n'
     if [[ -n "${STUB_US_ENABLED:-}" || -f "$state" ]]; then printf 'upgrade_status\n'; fi ;;
   pm:enable)

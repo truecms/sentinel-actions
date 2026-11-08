@@ -81,7 +81,11 @@ chmod 600 "$work/header"
 
 restore() {
   if [[ -f "$work/modules_before" && ! -f "$work/added_modules" ]]; then
-    enabled_modules | comm -13 "$work/modules_before" - > "$work/added_modules"
+    if enabled_modules > "$work/modules_after" && [[ -s "$work/modules_after" ]]; then
+      comm -13 "$work/modules_before" "$work/modules_after" > "$work/added_modules"
+    elif ! grep -qx upgrade_status "$work/modules_before"; then
+      echo upgrade_status > "$work/added_modules"
+    fi
   fi
   if [[ -s "$work/added_modules" ]]; then
     # shellcheck disable=SC2046 # One module name per line.
@@ -100,6 +104,15 @@ restore() {
       rm -f composer.lock
     fi
     log 'Restored composer.json and composer.lock. Nothing is committed.'
+    if [[ -f "$work/installed" ]]; then
+      # Put the installed packages back to what the restored lock file holds,
+      # so later steps in this job see the site as it was.
+      if [[ -f composer.lock ]] && composer install --no-interaction --no-progress > /dev/null 2>&1; then
+        log 'Reinstalled the packages from the restored lock file.'
+      else
+        log 'The installed packages still include Upgrade Status. Do not reuse this folder in later steps of this job.'
+      fi
+    fi
   fi
   rm -rf "$work"
 }
@@ -245,6 +258,7 @@ if [[ "$present" != 'yes' ]]; then
   if composer show --locked drupal/upgrade_status > /dev/null 2>&1; then
     # Already in the lock file, as a dev package left out of the image:
     # install exactly what the lock file holds.
+    touch "$work/installed"
     COMPOSER_NO_DEV=0 composer install --no-interaction --no-progress > "$work/composer.log" 2>&1
   else
     # Change the lock file only, check it, and only then install from it, so
@@ -252,7 +266,7 @@ if [[ "$present" != 'yes' ]]; then
     COMPOSER_NO_DEV=0 composer require --dev --no-install --no-interaction --no-progress drupal/upgrade_status > "$work/composer.log" 2>&1 || {
       core="$("${drush[@]}" status --field=drupal-version 2> /dev/null | trim)"
       [[ -n "$core" ]] && COMPOSER_NO_DEV=0 composer require --dev --no-install --no-interaction --no-progress drupal/upgrade_status "drupal/core-dev:$core" > "$work/composer.log" 2>&1
-    } && locked_versions_kept && COMPOSER_NO_DEV=0 composer install --no-interaction --no-progress >> "$work/composer.log" 2>&1
+    } && locked_versions_kept && touch "$work/installed" && COMPOSER_NO_DEV=0 composer install --no-interaction --no-progress >> "$work/composer.log" 2>&1
   fi
   # shellcheck disable=SC2181 # The status of whichever branch ran.
   if [[ $? -ne 0 ]]; then
@@ -265,7 +279,14 @@ fi
 enabled_modules() {
   "${drush[@]}" pm:list --type=module --status=enabled --field=name 2> /dev/null | tr -d ' ' | sort
 }
-enabled_modules > "$work/modules_before"
+# Without a full list of the modules on before, nothing is turned on, so the
+# clean-up can never turn off a module the site already had.
+if ! enabled_modules > "$work/modules_before.tmp" || [[ ! -s "$work/modules_before.tmp" ]]; then
+  log 'Could not list the enabled modules.'
+  report_problem install_failed || true
+  exit 1
+fi
+mv "$work/modules_before.tmp" "$work/modules_before"
 if ! "${drush[@]}" pm:enable upgrade_status --yes > "$work/enable.log" 2>&1; then
   tail -n 20 "$work/enable.log" >&2
   log 'Upgrade Status could not be enabled.'
@@ -273,8 +294,14 @@ if ! "${drush[@]}" pm:enable upgrade_status --yes > "$work/enable.log" 2>&1; the
   exit 1
 fi
 
-# The modules this run turned on, to turn off again at the end.
-enabled_modules | comm -13 "$work/modules_before" - > "$work/added_modules"
+# The modules this run turned on, to turn off again at the end. If the list
+# fails, only Upgrade Status itself is turned off.
+if enabled_modules > "$work/modules_after" && [[ -s "$work/modules_after" ]]; then
+  comm -13 "$work/modules_before" "$work/modules_after" > "$work/added_modules"
+else
+  grep -qx upgrade_status "$work/modules_before" || echo upgrade_status > "$work/added_modules"
+  touch "$work/added_modules"
+fi
 
 # 4. The scan. Exit code 3 means it found problems, which is a good scan.
 # Contributed projects are judged from their releases, so only custom code is

@@ -346,6 +346,39 @@ scan() { run bash "$ROOT/upgrade-scan/scan.sh"; }
   [ ! -f "$PROJECT/composer.lock" ]
 }
 
+@test 'reinstalls the packages from the restored lock file after adding Upgrade Status' {
+  echo '{"packages":[{"name":"drupal/core","version":"11.2.5"}]}' > "$PROJECT/composer.lock"
+  echo '{"packages":[{"name":"drupal/core","version":"11.2.5"}],"packages-dev":[{"name":"drupal/upgrade_status","version":"4.3.10"}]}' > "$BATS_TEST_TMPDIR/after.lock"
+  STUB_LOCK_AFTER="$BATS_TEST_TMPDIR/after.lock" STUB_US_MISSING=1 scan
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^composer install' "$STUB_LOG")" -eq 2 ]
+  [[ "$output" == *'Reinstalled the packages from the restored lock file.'* ]]
+  ! grep -q 'upgrade_status' "$PROJECT/composer.lock"
+}
+
+@test 'warns when the packages cannot be reinstalled' {
+  echo '{"packages":[{"name":"drupal/core","version":"11.2.5"}]}' > "$PROJECT/composer.lock"
+  echo '{"packages":[{"name":"drupal/core","version":"11.2.5"}],"packages-dev":[{"name":"drupal/upgrade_status","version":"4.3.10"}]}' > "$BATS_TEST_TMPDIR/after.lock"
+  STUB_LOCK_AFTER="$BATS_TEST_TMPDIR/after.lock" STUB_US_MISSING=1 STUB_REINSTALL_FAIL=1 scan
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Do not reuse this folder'* ]]
+}
+
+@test 'a failed module list stops before enabling anything' {
+  STUB_LIST_FAIL=1 scan
+  [ "$status" -eq 1 ]
+  grep -q '"reason":"install_failed"' "$STUB_LOG"
+  ! grep -q 'pm:enable' "$STUB_LOG"
+  ! grep -q 'pm:uninstall' "$STUB_LOG"
+}
+
+@test 'a failed second module list turns off only Upgrade Status' {
+  STUB_LIST_FAIL_AFTER=1 scan
+  [ "$status" -eq 0 ]
+  grep -q '^drush pm:uninstall upgrade_status --yes$' "$STUB_LOG"
+  ! grep -q 'pm:uninstall.*node' "$STUB_LOG"
+}
+
 @test 'upgrade-scan/gitlab.yml pins the SHA-256 of scan.sh' {
   if command -v sha256sum > /dev/null; then
     sum="$(sha256sum "$ROOT/upgrade-scan/scan.sh" | cut -d' ' -f1)"
