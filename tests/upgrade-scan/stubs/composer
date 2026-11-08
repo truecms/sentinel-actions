@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 echo "composer $*" >> "$STUB_LOG"
 echo "composer no-dev=${COMPOSER_NO_DEV-unset}" >> "$STUB_LOG"
+if [[ "$1" == config ]]; then echo vendor; exit 0; fi
 if [[ "$1" == show ]]; then [[ -n "${STUB_LOCKED:-}" ]]; exit; fi
 # A require changes both files; an install only writes a missing lock file.
 if [[ "$1" == require ]]; then

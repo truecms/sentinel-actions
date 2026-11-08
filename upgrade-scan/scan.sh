@@ -39,6 +39,8 @@ uuid="${SENTINEL_SITE_UUID:-}"
 key="${SENTINEL_SCAN_KEY:-}"
 uuid_re='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 [[ "$uuid" =~ $uuid_re ]] || fail 'SENTINEL_SITE_UUID is missing or is not a UUID. Copy it from the site page in Sentinel.'
+# Sentinel's routes use the lower-case form.
+uuid="$(printf '%s' "$uuid" | tr '[:upper:]' '[:lower:]')"
 [[ "$key" =~ ^sk_scan_[0-9a-f]{64}$ ]] || fail 'SENTINEL_SCAN_KEY is missing or is not a scan key. Create one on the site page in Sentinel and store it as a secret.'
 
 # Plain http:// only for localhost, as in the connector: the key must not
@@ -107,7 +109,8 @@ restore() {
     if [[ -f "$work/installed" ]]; then
       # Put the installed packages back to what the restored lock file holds,
       # so later steps in this job see the site as it was.
-      if [[ -f composer.lock ]] && composer install --no-interaction --no-progress > /dev/null 2>&1; then
+      # Composer records whether dev packages were installed; put that back.
+      if [[ -f composer.lock && -s "$work/no_dev" ]] && COMPOSER_NO_DEV="$(cat "$work/no_dev")" composer install --no-interaction --no-progress > /dev/null 2>&1; then
         log 'Reinstalled the packages from the restored lock file.'
       else
         log 'The installed packages still include Upgrade Status. Do not reuse this folder in later steps of this job.'
@@ -254,6 +257,12 @@ if [[ "$present" != 'yes' ]]; then
     log 'Composer is not in the image.'
     report_problem install_failed || true
     exit 1
+  fi
+  # Whether the image was built with dev packages, to restore it the same way.
+  vendor="$(composer config vendor-dir 2> /dev/null | trim)" || vendor=''
+  if [[ -n "$vendor" && -f "$vendor/composer/installed.json" ]] && command -v php > /dev/null 2>&1; then
+    # shellcheck disable=SC2016 # PHP code, expanded by PHP.
+    php -r '$d = json_decode(file_get_contents($argv[1]), TRUE); if (is_array($d) && isset($d["dev"])) { echo $d["dev"] ? "0" : "1"; }' "$vendor/composer/installed.json" > "$work/no_dev" 2> /dev/null || : > "$work/no_dev"
   fi
   if composer show --locked drupal/upgrade_status > /dev/null 2>&1; then
     # Already in the lock file, as a dev package left out of the image:

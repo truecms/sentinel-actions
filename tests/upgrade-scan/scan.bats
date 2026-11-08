@@ -347,6 +347,8 @@ scan() { run bash "$ROOT/upgrade-scan/scan.sh"; }
 }
 
 @test 'reinstalls the packages from the restored lock file after adding Upgrade Status' {
+  mkdir -p "$PROJECT/vendor/composer"
+  echo '{"packages":[],"dev":false}' > "$PROJECT/vendor/composer/installed.json"
   echo '{"packages":[{"name":"drupal/core","version":"11.2.5"}]}' > "$PROJECT/composer.lock"
   echo '{"packages":[{"name":"drupal/core","version":"11.2.5"}],"packages-dev":[{"name":"drupal/upgrade_status","version":"4.3.10"}]}' > "$BATS_TEST_TMPDIR/after.lock"
   STUB_LOCK_AFTER="$BATS_TEST_TMPDIR/after.lock" STUB_US_MISSING=1 scan
@@ -354,6 +356,21 @@ scan() { run bash "$ROOT/upgrade-scan/scan.sh"; }
   [ "$(grep -c '^composer install' "$STUB_LOG")" -eq 2 ]
   [[ "$output" == *'Reinstalled the packages from the restored lock file.'* ]]
   ! grep -q 'upgrade_status' "$PROJECT/composer.lock"
+  [ "$(grep '^composer no-dev=' "$STUB_LOG" | tail -n 1)" = 'composer no-dev=1' ]
+}
+
+@test 'does not reinstall when the dev package state is unknown' {
+  echo '{"packages":[{"name":"drupal/core","version":"11.2.5"}]}' > "$PROJECT/composer.lock"
+  echo '{"packages":[{"name":"drupal/core","version":"11.2.5"}],"packages-dev":[{"name":"drupal/upgrade_status","version":"4.3.10"}]}' > "$BATS_TEST_TMPDIR/after.lock"
+  STUB_LOCK_AFTER="$BATS_TEST_TMPDIR/after.lock" STUB_US_MISSING=1 scan
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^composer install' "$STUB_LOG")" -eq 1 ]
+  [[ "$output" == *'Do not reuse this folder'* ]]
+}
+
+@test 'an upper-case site UUID is sent in lower case' {
+  SENTINEL_SITE_UUID="$(printf '%s' "$UUID" | tr '[:lower:]' '[:upper:]')" STUB_BOOTSTRAP='' scan
+  grep -q "/api/v1/sites/$UUID/upgrade-readiness/scan" "$STUB_LOG"
 }
 
 @test 'warns when the packages cannot be reinstalled' {
