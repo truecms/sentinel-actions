@@ -1,0 +1,70 @@
+# Copy to .github/workflows/db-image-refresh.yml in the application repository.
+name: Build private Drupal database image
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '13 2 * * 1'
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: drupal-db-image
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check project adapters
+        run: |
+          set -euo pipefail
+          for f in .github/db-image/export.sh .github/db-image/sanitize.sh .github/db-image/verify.sh; do
+            test -x "$f" || { echo "Missing executable adapter: $f"; exit 1; }
+          done
+      - name: Prepare isolated snapshot
+        env:
+          HOST_SSH_KEY: ${{ secrets.DB_EXPORT_SSH_KEY }}
+          HOST_KNOWN_HOSTS: ${{ secrets.DB_EXPORT_KNOWN_HOSTS }}
+          HOST_TARGET: ${{ vars.DB_EXPORT_SSH_TARGET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          work="$(mktemp -d "$RUNNER_TEMP/db-image.XXXXXXXX")"
+          echo "DB_WORK=$work" >> "$GITHUB_ENV"
+          mkdir -m 700 "$work/ssh" "$work/context"
+          printf '%s\n' "$HOST_SSH_KEY" > "$work/ssh/id"
+          printf '%s\n' "$HOST_KNOWN_HOSTS" > "$work/ssh/known_hosts"
+          chmod 600 "$work/ssh/id" "$work/ssh/known_hosts"
+          export DB_SSH_KEY_FILE="$work/ssh/id" DB_KNOWN_HOSTS_FILE="$work/ssh/known_hosts"
+          .github/db-image/export.sh "$work/raw.sql.gz"
+          test -s "$work/raw.sql.gz"
+          .github/db-image/sanitize.sh "$work/raw.sql.gz" "$work/context/sanitized.sql.gz"
+          test -s "$work/context/sanitized.sql.gz"
+          .github/db-image/verify.sh "$work/context/sanitized.sql.gz"
+          rm -f "$work/raw.sql.gz" "$work/ssh/id"
+      - name: Confirm package is private before publishing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          owner="$GITHUB_REPOSITORY_OWNER"
+          visibility="$(gh api "orgs/$owner/packages/container/drupal-db" --jq .visibility 2>/dev/null || gh api "users/$owner/packages/container/drupal-db" --jq .visibility)"
+          test "$visibility" = private || { echo 'Package must already exist and be private.' >&2; exit 1; }
+      - name: Build and push image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/$owner/drupal-db"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          printf 'FROM mariadb:11.4\nCOPY sanitized.sql.gz /docker-entrypoint-initdb.d/seed.sql.gz\n' > "$DB_WORK/context/Dockerfile"
+          docker build --pull -t "$image:$GITHUB_SHA" -t "$image:latest" "$DB_WORK/context"
+          docker push "$image:$GITHUB_SHA"
+          docker push "$image:latest"
+      - name: Clean up snapshot
+        if: always()
+        run: |
+          if [ -n "${DB_WORK:-}" ]; then rm -rf -- "$DB_WORK"; fi
+          docker logout ghcr.io || true
