@@ -1,5 +1,8 @@
 # .github/workflows/sentinel-upgrade-scan.yml
 # Runs the Sentinel upgrade scan every Monday and when you start it by hand.
+# Turn it on or off with the variable SENTINEL_UPGRADE_SCAN (Settings, Secrets
+# and variables, Actions, Variables): true runs it, false skips it. A variable
+# on a GitHub environment works too if the job names that environment.
 name: Sentinel upgrade scan
 on:
   workflow_dispatch:
@@ -10,18 +13,20 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    # Optional: skip the whole job, without pulling the image, while the
+    # repository variable is not true. Environment variables are not seen here.
+    # if: vars.SENTINEL_UPGRADE_SCAN == 'true'
     # Your own site image, and a sanitised copy of your database.
     container: ghcr.io/your-org/your-site:latest
     services:
       database:
         image: ghcr.io/your-org/your-site-db:latest
-    env:
-      SENTINEL_UPGRADE_SCAN: '1'
     steps:
       # Only needed when the image does not already hold the site.
       - uses: actions/checkout@v5
       - uses: truecms/sentinel-actions/upgrade-scan@v1.0.0
         with:
+          enabled: ${{ vars.SENTINEL_UPGRADE_SCAN }}
           site-uuid: 00000000-0000-0000-0000-000000000000
           scan-key: ${{ secrets.SENTINEL_SCAN_KEY }}
           # If the image keeps the site elsewhere, for example /app:
