@@ -78,7 +78,7 @@ its inputs.
 
 | Variable | Meaning |
 |---|---|
-| `SENTINEL_UPGRADE_SCAN` | Must be set, and not `0` or `false`, or nothing runs. |
+| `SENTINEL_UPGRADE_SCAN` | The on or off switch: `true`, `1`, `yes` or `on` runs the scan; empty, `false`, `0`, `no` or `off` skips it and the job passes. Any other value fails the job. In GitHub, set it as a repository, organisation or environment variable and pass it to the action's `enabled` input; in GitLab, set it as a CI/CD variable or on the pipeline schedule. |
 | `SENTINEL_SITE_UUID` | The site's UUID in Sentinel. |
 | `SENTINEL_SCAN_KEY` | The scan key. Never printed. |
 | `SENTINEL_API_URL` | Optional API base URL, with no path. |
@@ -95,7 +95,7 @@ UUID, keep it the same as `SENTINEL_SITE_UUID`.
 
 ## What it does
 
-1. `SENTINEL_UPGRADE_SCAN` is not set: it does nothing and exits 0.
+1. `SENTINEL_UPGRADE_SCAN` is not set or is off: it does nothing and exits 0.
 2. Drush does not run, or cannot find the site: it fails, because the job is
    set up wrong. Drupal has no working database: it tells Sentinel
    `no_database` and exits 0 (or fails if Sentinel could not be told).

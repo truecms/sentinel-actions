@@ -29,20 +29,26 @@ Do this:
 4. Add one new job, copied from the matching example in that folder:
    - GitHub: a new workflow file, using
      `truecms/sentinel-actions/upgrade-scan@v1.0.0`, `site-uuid` set to the UUID
-     above and `scan-key: ${{ secrets.SENTINEL_SCAN_KEY }}`.
+     above, `scan-key: ${{ secrets.SENTINEL_SCAN_KEY }}` and
+     `enabled: ${{ vars.SENTINEL_UPGRADE_SCAN }}`.
    - GitLab: include `upgrade-scan/gitlab.yml` at `v1.0.0` and a
      `sentinel-upgrade-scan` job with our image, the database service,
-     `SENTINEL_UPGRADE_SCAN: '1'` and `SENTINEL_SITE_UUID`.
+     and `SENTINEL_SITE_UUID`. The switch `SENTINEL_UPGRADE_SCAN` comes
+     from a CI/CD variable, not from the file.
    - Run it on a weekly schedule and by hand only, never on every push.
    - Set the working directory if the site is not at the job's start folder.
-   - Set `SENTINEL_UPGRADE_SCAN` only in this job, never globally.
+   - Do not hard-code `SENTINEL_UPGRADE_SCAN` in the file. It is a CI
+     variable (GitHub: repository or environment variable; GitLab: CI/CD
+     variable) that I set to `true` to turn the scan on and `false` to turn it
+     off.
 5. Never write the scan key into any file, commit, log or message. It goes
    only into a CI secret named `SENTINEL_SCAN_KEY` (GitHub: repository secret;
    GitLab: masked and protected CI/CD variable), which I will add myself.
 6. Do not change other jobs, `composer.json`, `composer.lock` or Drupal
    configuration.
 7. Open the change as a branch and pull or merge request. In its description,
-   list what I must do: add the `SENTINEL_SCAN_KEY` secret (create the key on
+   list what I must do: add the `SENTINEL_UPGRADE_SCAN` variable set to `true`,
+   add the `SENTINEL_SCAN_KEY` secret (create the key on
    the site page in Sentinel), add a GitLab pipeline schedule if on GitLab, and
    run the job once by hand to check it.
 

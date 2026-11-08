@@ -38,6 +38,30 @@ scan() { run bash "$ROOT/upgrade-scan/scan.sh"; }
   [ ! -s "$STUB_LOG" ]
 }
 
+@test 'does nothing when the switch is off, in any case' {
+  for value in false FALSE False ' off ' no 0; do
+    SENTINEL_UPGRADE_SCAN="$value" scan
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'turned off'* ]]
+  done
+  [ ! -s "$STUB_LOG" ]
+}
+
+@test 'runs when the switch is on, in any case' {
+  for value in true TRUE Yes on 1; do
+    SENTINEL_UPGRADE_SCAN="$value" scan
+    [ "$status" -eq 0 ]
+  done
+  grep -q 'upgrade_status:analyze' "$STUB_LOG"
+}
+
+@test 'fails on a switch value it does not know' {
+  SENTINEL_UPGRADE_SCAN='maybe' scan
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'must be true or false'* ]]
+  [ ! -s "$STUB_LOG" ]
+}
+
 @test 'refuses a malformed key without calling anything or printing it' {
   SENTINEL_SCAN_KEY='sk_scan_short' scan
   [ "$status" -eq 1 ]

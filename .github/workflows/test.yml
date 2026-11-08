@@ -18,3 +18,34 @@ jobs:
         run: shellcheck scripts/*.sh */scan.sh tests/*/stubs/*
       - name: Tests
         run: bats tests/*/*.bats
+
+  # The action's on or off switch, as a workflow passes it from a variable.
+  action-switch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Off through the input
+        uses: ./upgrade-scan
+        with:
+          enabled: 'false'
+          site-uuid: not-checked-while-off
+          scan-key: not-checked-while-off
+      - name: Empty input and no job variable
+        uses: ./upgrade-scan
+        with:
+          enabled: ''
+          site-uuid: not-checked-while-off
+          scan-key: not-checked-while-off
+      - name: Empty input falls back to the job variable
+        id: fallback
+        continue-on-error: true
+        uses: ./upgrade-scan
+        env:
+          SENTINEL_UPGRADE_SCAN: 'true'
+        with:
+          site-uuid: not-a-uuid
+          scan-key: not-a-key
+      - name: The job variable turned the scan on
+        run: test "${{ steps.fallback.outcome }}" = failure

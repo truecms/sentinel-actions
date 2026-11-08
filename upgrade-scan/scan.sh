@@ -28,11 +28,19 @@ readonly DEFAULT_API_URL='https://ingest.sentinelconnector.io'
 log() { printf 'Sentinel upgrade scan: %s\n' "$*"; }
 fail() { log "$*" >&2; exit 1; }
 
-case "${SENTINEL_UPGRADE_SCAN:-}" in
-  ''|0|false|FALSE|no|off)
+# The on or off switch, for example from a GitHub or GitLab CI variable.
+switch="$(printf '%s' "${SENTINEL_UPGRADE_SCAN:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+case "$switch" in
+  '')
     log 'SENTINEL_UPGRADE_SCAN is not set. Nothing to do.'
     exit 0
     ;;
+  0|false|no|off)
+    log 'The scan is turned off (SENTINEL_UPGRADE_SCAN). Nothing to do.'
+    exit 0
+    ;;
+  1|true|yes|on) ;;
+  *) fail 'SENTINEL_UPGRADE_SCAN must be true or false (or 1, 0, yes, no, on, off).' ;;
 esac
 
 uuid="${SENTINEL_SITE_UUID:-}"
