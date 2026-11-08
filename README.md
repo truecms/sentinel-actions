@@ -8,6 +8,8 @@ image, and sends Sentinel only what that check needs.
 |---|---|---|---|
 | [Upgrade scan](upgrade-scan) | Drupal upgrade readiness from Upgrade Status, without installing it on production. | `truecms/sentinel-actions/upgrade-scan@v1.0.0` | `upgrade-scan/gitlab.yml` |
 
+For a standalone workflow template, see the [private Drupal database image example](examples/drupal-db-image/README.md).
+
 Each action folder has:
 
 - the GitHub action (`action.yml`) and the GitLab template (`gitlab.yml`),
