@@ -1,0 +1,20 @@
+# Add to .gitlab-ci.yml. Runs from a pipeline schedule (Build > Pipeline
+# schedules, for example every Monday: 0 3 * * 1) or a pipeline you start by hand.
+include:
+  - remote: https://raw.githubusercontent.com/truecms/sentinel-actions/v1.0.0/upgrade-scan/gitlab.yml
+
+sentinel-upgrade-scan:
+  # Your own site image, and a sanitised copy of your database.
+  image: registry.example.com/your-site:latest
+  services:
+    - name: registry.example.com/your-site-db:latest
+      alias: database
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+  variables:
+    SENTINEL_UPGRADE_SCAN: '1'
+    SENTINEL_SITE_UUID: 00000000-0000-0000-0000-000000000000
+    # If the image keeps the site elsewhere, for example /app:
+    # SENTINEL_PROJECT_DIR: /app
+    # Set SENTINEL_SCAN_KEY as a masked, protected CI/CD variable.
