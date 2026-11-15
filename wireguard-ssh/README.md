@@ -47,15 +47,21 @@ destination; this check does not support full-tunnel routes.
 4. Keep SSH key authentication and host-key checking enabled. VPN connectivity
    controls network reachability; it does not replace SSH authentication. Use
    IPv4 (`ssh -4`) for commands to the target, matching the action's route check.
-5. Use a reviewed release tag or full commit SHA in `uses`. The example uses
-   the repository's `v1.1.0` release; pin a full SHA if you prefer an immutable
-   commit reference.
+5. Use a reviewed release tag or full commit SHA in `uses`. The example pins
+   the inspected action commit; review it before adoption and update it deliberately.
 
 ## Example workflow
 
-See [the complete deploy workflow](examples/deploy.yml). It uses the action,
-then performs a deployment with a separate SSH key and pinned host key. Its
-action reference points to the `v1.1.0` release.
+See [the complete deploy workflow](examples/deploy.yml). It is manually
+triggered on `main`, uses a `production` environment and repository-scoped
+concurrency, then invokes a server-side command with a separate SSH key and
+verified host key. Create and protect the environment first; a name in the
+workflow does not configure deployment restrictions. Replace the example command
+with your own reviewed deployment procedure. Test the complete path, firewall
+restrictions, cleanup and recovery on a non-production target before use.
+Concurrent deployments in different repositories need separate peers or
+external coordination. A pending workflow can be replaced under GitHub's
+default concurrency rules.
 
 ## Troubleshooting
 

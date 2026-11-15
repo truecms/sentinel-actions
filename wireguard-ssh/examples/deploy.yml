@@ -1,29 +1,31 @@
 name: Deploy over a private WireGuard route
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: production-deployment-vpn
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
       - name: Connect to the deployment VPN
-        uses: truecms/sentinel-actions/wireguard-ssh@v1.1.0
+        uses: truecms/sentinel-actions/wireguard-ssh@411865987b0e9fb82fb1ef4246323161a3176472
         with:
           config: ${{ secrets.WIREGUARD_CONFIG_DEPLOY }}
           target-host: ${{ vars.DEPLOY_SSH_HOST }}
           target-port: ${{ vars.DEPLOY_SSH_PORT || '22' }}
           timeout-seconds: '30'
 
-      - name: Deploy over SSH
+      - name: Deploy with verified SSH
+        shell: bash
         env:
           DEPLOY_SSH_HOST: ${{ vars.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
@@ -31,14 +33,23 @@ jobs:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
           DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
         run: |
-          install -m 700 -d "$HOME/.ssh"
-          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$HOME/.ssh/deploy_key"
-          chmod 600 "$HOME/.ssh/deploy_key"
-          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/known_hosts"
-          ssh -4 -i "$HOME/.ssh/deploy_key" \
+          set -euo pipefail
+          umask 077
+          deploy_ssh_dir="$(mktemp -d "$RUNNER_TEMP/deploy-ssh.XXXXXX")"
+          trap 'rm -rf -- "$deploy_ssh_dir"' EXIT
+
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$deploy_ssh_dir/key"
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > "$deploy_ssh_dir/known_hosts"
+
+          ssh -4 -F /dev/null \
+            -i "$deploy_ssh_dir/key" \
+            -o BatchMode=yes \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$deploy_ssh_dir/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o ConnectTimeout=10 \
             -p "$DEPLOY_SSH_PORT" \
-            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            'your-deployment-command'
+            -l "$DEPLOY_SSH_USER" \
+            "$DEPLOY_SSH_HOST" \
+            '/usr/local/bin/deploy-site'
