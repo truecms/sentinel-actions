@@ -37,7 +37,7 @@ anything, and it cannot change the site's modules in Sentinel.
 See [`examples/github-workflow.yml`](examples/github-workflow.yml):
 
 ```yaml
-- uses: truecms/sentinel-actions/upgrade-scan@v1.0.0
+- uses: truecms/sentinel-actions/upgrade-scan@v1.1.0
   with:
     site-uuid: 00000000-0000-0000-0000-000000000000
     scan-key: ${{ secrets.SENTINEL_SCAN_KEY }}
@@ -64,7 +64,7 @@ See [`examples/gitlab-ci.yml`](examples/gitlab-ci.yml):
 
 ```yaml
 include:
-  - remote: https://raw.githubusercontent.com/truecms/sentinel-actions/v1.0.0/upgrade-scan/gitlab.yml
+  - remote: https://raw.githubusercontent.com/truecms/sentinel-actions/v1.1.0/upgrade-scan/gitlab.yml
 ```
 
 Then override the `sentinel-upgrade-scan` job with your image, database

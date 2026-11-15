@@ -24,7 +24,7 @@ jobs:
     steps:
       # Only needed when the image does not already hold the site.
       - uses: actions/checkout@v5
-      - uses: truecms/sentinel-actions/upgrade-scan@v1.0.0
+      - uses: truecms/sentinel-actions/upgrade-scan@v1.1.0
         with:
           enabled: ${{ vars.SENTINEL_UPGRADE_SCAN }}
           site-uuid: 00000000-0000-0000-0000-000000000000

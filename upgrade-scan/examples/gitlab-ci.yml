@@ -3,7 +3,7 @@
 # Turn it on or off with the CI/CD variable SENTINEL_UPGRADE_SCAN (Settings,
 # CI/CD, Variables, or on the schedule): true runs it, false skips it.
 include:
-  - remote: https://raw.githubusercontent.com/truecms/sentinel-actions/v1.0.0/upgrade-scan/gitlab.yml
+  - remote: https://raw.githubusercontent.com/truecms/sentinel-actions/v1.1.0/upgrade-scan/gitlab.yml
 
 sentinel-upgrade-scan:
   # Your own site image, and a sanitised copy of your database.

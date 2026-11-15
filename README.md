@@ -6,8 +6,8 @@ image, and sends Sentinel only what that check needs.
 
 | Action | What it does | GitHub Actions | GitLab CI |
 |---|---|---|---|
-| [Upgrade scan](upgrade-scan) | Drupal upgrade readiness from Upgrade Status, without installing it on production. | `truecms/sentinel-actions/upgrade-scan@v1.0.0` | `upgrade-scan/gitlab.yml` |
-| [WireGuard SSH](wireguard-ssh) | Connect a Linux workflow runner to a WireGuard peer and verify an SSH destination uses the tunnel. | `truecms/sentinel-actions/wireguard-ssh@<reviewed-ref>` | — |
+| [Upgrade scan](upgrade-scan) | Drupal upgrade readiness from Upgrade Status, without installing it on production. | `truecms/sentinel-actions/upgrade-scan@v1.1.0` | `upgrade-scan/gitlab.yml` |
+| [WireGuard SSH](wireguard-ssh) | Connect a Linux workflow runner to a WireGuard peer and verify an SSH destination uses the tunnel. | `truecms/sentinel-actions/wireguard-ssh@v1.1.0` | — |
 
 For a standalone workflow template, see the [private Drupal database image example](examples/drupal-db-image/README.md).
 

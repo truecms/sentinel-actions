@@ -47,15 +47,15 @@ destination; this check does not support full-tunnel routes.
 4. Keep SSH key authentication and host-key checking enabled. VPN connectivity
    controls network reachability; it does not replace SSH authentication. Use
    IPv4 (`ssh -4`) for commands to the target, matching the action's route check.
-5. Use a reviewed release tag or full commit SHA in `uses`. Replace the example
-   ref below with a release or SHA that contains this action.
+5. Use a reviewed release tag or full commit SHA in `uses`. The example uses
+   the repository's `v1.1.0` release; pin a full SHA if you prefer an immutable
+   commit reference.
 
 ## Example workflow
 
 See [the complete deploy workflow](examples/deploy.yml). It uses the action,
-then performs a deployment with a separate SSH key and pinned host key. The
-example's action ref is a placeholder; replace it with a reviewed full commit
-SHA or release tag that includes this action.
+then performs a deployment with a separate SSH key and pinned host key. Its
+action reference points to the `v1.1.0` release.
 
 ## Troubleshooting
 

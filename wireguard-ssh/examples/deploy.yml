@@ -16,7 +16,7 @@ jobs:
           persist-credentials: false
 
       - name: Connect to the deployment VPN
-        uses: truecms/sentinel-actions/wireguard-ssh@<full-commit-SHA>
+        uses: truecms/sentinel-actions/wireguard-ssh@v1.1.0
         with:
           config: ${{ secrets.WIREGUARD_CONFIG_DEPLOY }}
           target-host: ${{ vars.DEPLOY_SSH_HOST }}

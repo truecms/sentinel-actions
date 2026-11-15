@@ -9,7 +9,7 @@ the Site UUID first. Never paste your scan key into the chat.
 Add the Sentinel upgrade scan to this Drupal repository's CI. It runs the
 Drupal Upgrade Status scan in our own CI and sends only counts to Sentinel.
 The instructions and examples are in
-https://github.com/truecms/sentinel-actions/tree/v1.0.0/upgrade-scan
+https://github.com/truecms/sentinel-actions/tree/v1.1.0/upgrade-scan
 (read the README there first).
 
 Site UUID: REPLACE_WITH_SITE_UUID
@@ -28,10 +28,10 @@ Do this:
    it is older, tell me; do not upgrade it as part of this change.
 4. Add one new job, copied from the matching example in that folder:
    - GitHub: a new workflow file, using
-     `truecms/sentinel-actions/upgrade-scan@v1.0.0`, `site-uuid` set to the UUID
+     `truecms/sentinel-actions/upgrade-scan@v1.1.0`, `site-uuid` set to the UUID
      above, `scan-key: ${{ secrets.SENTINEL_SCAN_KEY }}` and
      `enabled: ${{ vars.SENTINEL_UPGRADE_SCAN }}`.
-   - GitLab: include `upgrade-scan/gitlab.yml` at `v1.0.0` and a
+   - GitLab: include `upgrade-scan/gitlab.yml` at `v1.1.0` and a
      `sentinel-upgrade-scan` job with our image, the database service,
      and `SENTINEL_SITE_UUID`. The switch `SENTINEL_UPGRADE_SCAN` comes
      from a CI/CD variable, not from the file.
