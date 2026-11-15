@@ -7,13 +7,14 @@ image, and sends Sentinel only what that check needs.
 | Action | What it does | GitHub Actions | GitLab CI |
 |---|---|---|---|
 | [Upgrade scan](upgrade-scan) | Drupal upgrade readiness from Upgrade Status, without installing it on production. | `truecms/sentinel-actions/upgrade-scan@v1.0.0` | `upgrade-scan/gitlab.yml` |
+| [WireGuard SSH](wireguard-ssh) | Connect a Linux workflow runner to a WireGuard peer and verify an SSH destination uses the tunnel. | `truecms/sentinel-actions/wireguard-ssh@<reviewed-ref>` | — |
 
 For a standalone workflow template, see the [private Drupal database image example](examples/drupal-db-image/README.md).
 
-Each action folder has:
+Each action folder documents the CI systems it supports and may include:
 
-- the GitHub action (`action.yml`) and the GitLab template (`gitlab.yml`),
-- `examples/` with a complete GitHub workflow and GitLab job,
+- a native GitHub action (`action.yml`) or GitLab template (`gitlab.yml`),
+- `examples/` with a complete workflow or job for the supported system,
 - `prompts/` with an AI prompt you paste into your coding assistant, opened in
   your repository, to add the job for you.
 
@@ -40,6 +41,7 @@ an AI chat. The actions never print them.
 ```bash
 shellcheck scripts/*.sh */scan.sh tests/*/stubs/*
 bats tests/*/*.bats
+node --test tests/wireguard-ssh.test.js
 ```
 
 To release: run `scripts/pin-release.sh vX.Y.Z`, commit, then tag `vX.Y.Z`.
