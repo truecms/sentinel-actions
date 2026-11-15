@@ -18,6 +18,8 @@ jobs:
         run: shellcheck scripts/*.sh */scan.sh tests/*/stubs/* examples/drupal-db-image/*.sh
       - name: Tests
         run: bats tests/*/*.bats
+      - name: Test WireGuard SSH action
+        run: node --test tests/wireguard-ssh.test.js
 
   # The action's on or off switch, as a workflow passes it from a variable.
   action-switch:

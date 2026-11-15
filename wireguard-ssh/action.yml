@@ -1,0 +1,28 @@
+name: Connect to WireGuard for SSH
+description: Connect an Ubuntu GitHub Actions runner to WireGuard and verify an SSH destination uses the tunnel.
+author: TrueCMS
+branding:
+  icon: lock
+  color: blue
+
+inputs:
+  config:
+    description: Complete WireGuard client configuration. Pass it from a GitHub Actions secret.
+    required: true
+  target-host:
+    description: IPv4 address or hostname of the SSH destination.
+    required: true
+  target-port:
+    description: SSH port on the destination.
+    required: false
+    default: '22'
+  timeout-seconds:
+    description: Maximum time for WireGuard setup and SSH reachability, after required tools are installed.
+    required: false
+    default: '30'
+
+runs:
+  using: node24
+  main: index.js
+  post: post.js
+  post-if: always()
