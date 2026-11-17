@@ -336,6 +336,33 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(done.returncode, 1, text)
         self.assertIn("Database dump", text)
 
+    def test_a_new_branch_reads_the_commits_only_it_has(self):
+        repo = make_repo({})
+        sh(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        sh(repo, "checkout", "-qb", "feature")
+        (repo / "settings.php").write_text(SECRET_LINE)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "add")
+        sh(repo, "rm", "-q", "settings.php")
+        sh(repo, "commit", "-qm", "remove")
+        head = sh(repo, "rev-parse", "HEAD")
+        sh(repo, "update-ref", "refs/remotes/origin/feature", head)
+        event = {"ref": "refs/heads/feature", "before": "0" * 40, "after": head}
+        Stub.answer = ["report"]
+        done, text = self.run_scan(repo, linked=True, event=event)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertEqual(len(json.loads(Stub.seen[-1]["raw"])["findings"]), 1)
+        self.assert_value_hidden(done, text)
+
+    def test_a_push_whose_old_commits_are_gone_is_not_reported(self):
+        repo = make_repo({"settings.php": "fine\n"})
+        head = sh(repo, "rev-parse", "HEAD")
+        event = {"ref": "refs/heads/main", "before": "1" * 40, "after": head}
+        done, text = self.run_scan(repo, linked=True, event=event)
+        self.assertEqual(done.returncode, 0, text)
+        self.assertEqual([c for c in Stub.seen if "raw" in c], [])
+        self.assertIn("only the last 50 commits were read", text)
+
     def test_a_real_dump_fails_and_a_test_dump_does_not(self):
         repo = make_repo({"backup/site.sql": DUMP})
         done, text = self.run_scan(repo)

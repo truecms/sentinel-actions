@@ -244,31 +244,53 @@ def event() -> dict[str, Any]:
         return {}
 
 
-def commit_range(repo: Path, history: int) -> tuple[list[str], int, bool]:
+def _reading(repo: Path, wanted: set[str]) -> tuple[int, bool]:
+    """How many commits from the checkout's HEAD the dump check reads to
+    take in ``wanted``, and whether it can. HEAD is GitHub's merge commit
+    for a pull request, so base branch commits may fall among them."""
+    order = git(repo, "rev-list", f"-n{MAX_RANGE}", "HEAD").split()
+    last = [i for i, sha in enumerate(order) if sha in wanted]
+    commits = last[-1] + 1 if last else max(1, min(len(wanted), MAX_RANGE))
+    # A range that reaches past the limit is never read as complete.
+    return commits, wanted <= set(order[:commits])
+
+
+def commit_range(repo: Path, history: int) -> tuple[list[str], int, str]:
     """Gitleaks' --log-opts for the commits this run is about, how many
-    commits the dump check reads, and whether those take in the whole range."""
+    commits the dump check reads, and what that covers: ``whole`` (the
+    run's commits, or the last history-commits when the run names none),
+    ``over_limit`` (more commits than the check reads) or ``window`` (the
+    run names commits this checkout does not have)."""
     payload = event()
+    payload = payload if isinstance(payload, dict) else {}
     base = head = ""
-    pull = payload.get("pull_request") if isinstance(payload, dict) else None
+    pull = payload.get("pull_request")
     if isinstance(pull, dict):
         base = str((pull.get("base") or {}).get("sha") or "")
         head = str((pull.get("head") or {}).get("sha") or "")
-    elif isinstance(payload, dict):
+    else:
         base, head = str(payload.get("before") or ""), str(payload.get("after") or "")
     if reachable(repo, base) and reachable(repo, head):
-        # The dump check reads the newest N commits from the checkout's
-        # HEAD, which for a pull request is GitHub's merge commit. N is set
-        # so those commits take in every commit of the range, wherever the
-        # base branch's commits fall among them; history-commits is only
-        # for runs with no range.
         wanted = set(git(repo, "rev-list", f"{base}..{head}").split())
-        order = git(repo, "rev-list", f"-n{MAX_RANGE}", "HEAD").split()
-        last = [i for i, sha in enumerate(order) if sha in wanted]
-        commits = last[-1] + 1 if last else max(1, min(len(wanted), MAX_RANGE))
-        # A range that reaches past the limit is never read as complete.
-        complete = wanted <= set(order[:commits])
-        return [f"{base}..{head}"], commits, complete
-    return [f"-n {history}"], history, True
+        commits, whole = _reading(repo, wanted)
+        return [f"{base}..{head}"], commits, "whole" if whole else "over_limit"
+    if not pull and reachable(repo, head):
+        # A new branch, or a force push whose old commits are gone: the
+        # commits on this branch and on no other branch the checkout has.
+        ref = str(payload.get("ref") or "")
+        mine = "refs/remotes/origin/" + ref.removeprefix("refs/heads/")
+        others = [
+            r
+            for r in git(repo, "for-each-ref", "--format=%(refname)", "refs/remotes/").split()
+            if r not in (mine, "refs/remotes/origin/HEAD")
+        ]
+        if others:
+            wanted = set(git(repo, "rev-list", head, "--not", *others).split())
+            commits, whole = _reading(repo, wanted)
+            spec = " ".join([head, "--not", *others])
+            return [spec], commits, "whole" if whole else "over_limit"
+    named = bool(base or head)
+    return [f"-n {history}"], history, "window" if named else "whole"
 
 
 def run_gitleaks(cfg: Settings, mode: str, extra: list[str]) -> list[dict[str, Any]]:
@@ -512,7 +534,7 @@ def main() -> int:
         cfg = settings()
         if not cfg.gitleaks:
             cfg.gitleaks = install_gitleaks()
-        log_opts, commits, whole_range = commit_range(cfg.repo, cfg.history)
+        log_opts, commits, covered = commit_range(cfg.repo, cfg.history)
         with ignore_file_aside(cfg):
             rows = run_gitleaks(cfg, "git", ["--log-opts", log_opts[0]])
             rows += run_gitleaks(cfg, "dir", [])
@@ -524,9 +546,15 @@ def main() -> int:
         return 1
 
     found_dumps, dump_note, unread = find_dumps(cfg, commits)
-    if not whole_range and not dump_note:
+    if covered == "over_limit" and not dump_note:
         dump_note = "incomplete"
     notes: list[str] = []
+    if covered == "window":
+        notes.append(
+            f"This run's commits are not all in the checkout (a force push, or "
+            f"fetch-depth other than 0), so only the last {cfg.history} commits "
+            "were read."
+        )
     if unread:
         notes.append(
             f"{unread} compressed file{'s' if unread != 1 else ''} could not be "
@@ -565,7 +593,7 @@ def main() -> int:
     # A partial report is never sent: Sentinel would read what it leaves
     # out (an unfinished dump check, findings over the limit, a dump whose
     # path holds a secret) as gone.
-    partial = bool(dump_note or left_out or hidden)
+    partial = bool(dump_note or left_out or hidden or covered == "window")
     if cfg.linked and partial:
         notes.append("Not reported to Sentinel: this run's result is not complete.")
     elif cfg.linked:
