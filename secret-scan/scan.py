@@ -244,9 +244,9 @@ def event() -> dict[str, Any]:
         return {}
 
 
-def commit_range(repo: Path, history: int) -> tuple[list[str], int]:
-    """Gitleaks' --log-opts for the commits this run is about, and how many
-    commits that is (for the dump check)."""
+def commit_range(repo: Path, history: int) -> tuple[list[str], int, bool]:
+    """Gitleaks' --log-opts for the commits this run is about, how many
+    commits the dump check reads, and whether those take in the whole range."""
     payload = event()
     base = head = ""
     pull = payload.get("pull_request") if isinstance(payload, dict) else None
@@ -265,8 +265,10 @@ def commit_range(repo: Path, history: int) -> tuple[list[str], int]:
         order = git(repo, "rev-list", f"-n{MAX_RANGE}", "HEAD").split()
         last = [i for i, sha in enumerate(order) if sha in wanted]
         commits = last[-1] + 1 if last else max(1, min(len(wanted), MAX_RANGE))
-        return [f"{base}..{head}"], commits
-    return [f"-n {history}"], history
+        # A range that reaches past the limit is never read as complete.
+        complete = wanted <= set(order[:commits])
+        return [f"{base}..{head}"], commits, complete
+    return [f"-n {history}"], history, True
 
 
 def run_gitleaks(cfg: Settings, mode: str, extra: list[str]) -> list[dict[str, Any]]:
@@ -510,7 +512,7 @@ def main() -> int:
         cfg = settings()
         if not cfg.gitleaks:
             cfg.gitleaks = install_gitleaks()
-        log_opts, commits = commit_range(cfg.repo, cfg.history)
+        log_opts, commits, whole_range = commit_range(cfg.repo, cfg.history)
         with ignore_file_aside(cfg):
             rows = run_gitleaks(cfg, "git", ["--log-opts", log_opts[0]])
             rows += run_gitleaks(cfg, "dir", [])
@@ -522,6 +524,8 @@ def main() -> int:
         return 1
 
     found_dumps, dump_note, unread = find_dumps(cfg, commits)
+    if not whole_range and not dump_note:
+        dump_note = "incomplete"
     notes: list[str] = []
     if unread:
         notes.append(

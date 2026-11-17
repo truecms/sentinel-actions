@@ -88,3 +88,18 @@ permissions:
 
 Linux runners only (x64 or arm64), with Python 3.10 or later and Git, as on
 GitHub's `ubuntu-latest`.
+
+## Limits
+
+The dump check is Sentinel's own, so it has the same limits as the Deep scan:
+
+- In history it reads the newest version of each file the run's commits
+  added or changed and that is no longer in the checkout. A dump overwritten
+  by a clean file at the same path is not found in history yet.
+- For a pull request it reads back from GitHub's merge commit far enough to
+  take in every commit of the pull request, so it can also find a dump in a
+  base branch commit made since the branch started.
+- A compressed file it cannot open is listed as unread in the summary, not
+  as a finding.
+- If the check does not finish, the step fails and nothing is sent to
+  Sentinel.
