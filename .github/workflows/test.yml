@@ -51,3 +51,48 @@ jobs:
           scan-key: not-a-key
       - name: The job variable turned the scan on
         run: test "${{ steps.fallback.outcome }}" = failure
+
+  # The secret scan's tests run the real Gitleaks, installed as the action
+  # installs it (pinned version, checked SHA-256).
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Gitleaks
+        run: |
+          path="$(python3 -c 'import sys; sys.path.insert(0, "secret-scan"); import scan; print(scan.install_gitleaks())')"
+          echo "SENTINEL_TEST_GITLEAKS=$path" >> "$GITHUB_ENV"
+      - name: Tests
+        run: python3 -m unittest discover -s tests/secret-scan -v
+
+  # The action itself, on a throwaway repository with a planted secret.
+  secret-scan-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: A repository with a planted secret
+        run: |
+          repo="$RUNNER_TEMP/fixture"
+          mkdir -p "$repo" && cd "$repo"
+          git init -q && git config user.email ci@example.com && git config user.name CI
+          echo base > README.md && git add -A && git commit -qm base
+          # Split so this workflow file holds no whole token.
+          printf '$stripe = "%s%s";\n' 'sk_' 'live_51HxQPLANTEDvalue00424242abcd' > settings.php
+          git add -A && git commit -qm leak
+      - name: Standalone run fails on it
+        id: standalone
+        continue-on-error: true
+        uses: ./secret-scan
+        with:
+          working-directory: ${{ runner.temp }}/fixture
+      - name: It failed
+        run: test "${{ steps.standalone.outcome }}" = failure
+      - name: Only the summary when told not to fail
+        uses: ./secret-scan
+        with:
+          working-directory: ${{ runner.temp }}/fixture
+          fail-on-findings: 'false'
