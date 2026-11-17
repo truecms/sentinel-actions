@@ -224,13 +224,15 @@ class ScanTest(unittest.TestCase):
             "SENTINEL_API_URL": f"http://127.0.0.1:{self.port}",
             "ACTIONS_ID_TOKEN_REQUEST_URL": f"http://127.0.0.1:{self.port}/token",
             "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
+            # Advisory mode still fails a check that did not finish.
+            "SENTINEL_FAIL": "false",
         }
         sys.path.insert(0, str(SCRIPT.parent))
         try:
             import scan  # noqa: PLC0415
 
             with mock.patch.dict(os.environ, environment), mock.patch.object(
-                scan, "find_dumps", return_value=([], "incomplete")
+                scan, "find_dumps", return_value=([], "incomplete", 0)
             ), contextlib.redirect_stdout(io.StringIO()):
                 code = scan.main()
         finally:
@@ -244,9 +246,10 @@ class ScanTest(unittest.TestCase):
         Stub.answer = ["report"]
         done, text = self.run_scan(repo, linked=True)
         self.assertEqual(done.returncode, 1, text)
-        kinds = [f["kind"] for f in json.loads(Stub.seen[-1]["raw"])["findings"]]
-        self.assertEqual(kinds, ["secret"])
+        # Nothing is sent: a report without the dump would read it as gone.
+        self.assertEqual([c for c in Stub.seen if "raw" in c], [])
         self.assertIn("the path holds a secret", text)
+        self.assertIn("this run's result is not complete", text)
         self.assert_value_hidden(done, text)
 
     def test_linked_sends_the_report_and_skips_what_sentinel_marked_safe(self):
@@ -303,6 +306,35 @@ class ScanTest(unittest.TestCase):
         event = {"pull_request": {"number": 3, "base": {"sha": base}, "head": {"sha": head}}}
         done, text = self.run_scan(repo, event=event)
         self.assertEqual(done.returncode, 0, text)
+
+    def test_a_pull_request_reads_dumps_in_all_its_commits(self):
+        """GitHub checks out a merge commit; base commits newer than the
+        pull request's must not push its commits out of the dump check."""
+        repo = make_repo({})
+        sh(repo, "checkout", "-qb", "feature")
+        (repo / "backup.sql").write_text(DUMP)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "add dump")
+        sh(repo, "rm", "-q", "backup.sql")
+        sh(repo, "commit", "-qm", "remove dump")
+        head = sh(repo, "rev-parse", "HEAD")
+        sh(repo, "checkout", "-q", "-")
+        for n in range(5):
+            # Base commits dated after the pull request's come first in HEAD's log.
+            (repo / f"base{n}.txt").write_text(f"{n}\n")
+            sh(repo, "add", "-A")
+            date = f"2099-01-0{n + 1}T00:00:00"
+            subprocess.run(
+                ["git", "-C", str(repo), "commit", "-qm", f"base {n}"],
+                check=True,
+                env={**os.environ, "GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date},
+            )
+        tip = sh(repo, "rev-parse", "HEAD")
+        sh(repo, "merge", "-q", "--no-ff", "-m", "merge", "feature")
+        event = {"pull_request": {"number": 4, "base": {"sha": tip}, "head": {"sha": head}}}
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertIn("Database dump", text)
 
     def test_a_real_dump_fails_and_a_test_dump_does_not(self):
         repo = make_repo({"backup/site.sql": DUMP})

@@ -256,52 +256,55 @@ def commit_range(repo: Path, history: int) -> tuple[list[str], int]:
     elif isinstance(payload, dict):
         base, head = str(payload.get("before") or ""), str(payload.get("after") or "")
     if reachable(repo, base) and reachable(repo, head):
-        count = git(repo, "rev-list", "--count", f"{base}..{head}")
-        # The dump check reads the whole range too, as Gitleaks does;
-        # history-commits is only for runs with no range.
-        commits = max(1, min(int(count) if count.isdigit() else history, MAX_RANGE))
+        # The dump check reads the newest N commits from the checkout's
+        # HEAD, which for a pull request is GitHub's merge commit. N is set
+        # so those commits take in every commit of the range, wherever the
+        # base branch's commits fall among them; history-commits is only
+        # for runs with no range.
+        wanted = set(git(repo, "rev-list", f"{base}..{head}").split())
+        order = git(repo, "rev-list", f"-n{MAX_RANGE}", "HEAD").split()
+        last = [i for i, sha in enumerate(order) if sha in wanted]
+        commits = last[-1] + 1 if last else max(1, min(len(wanted), MAX_RANGE))
         return [f"{base}..{head}"], commits
     return [f"-n {history}"], history
 
 
 def run_gitleaks(cfg: Settings, mode: str, extra: list[str]) -> list[dict[str, Any]]:
-    with tempfile.TemporaryDirectory(prefix="sentinel-gitleaks-") as scratch:
-        report = Path(scratch) / "report.json"
-        command = [
-            cfg.gitleaks,
-            mode,
-            *extra,
-            "--report-format",
-            "json",
-            "--report-path",
-            str(report),
-            "--exit-code",
-            "0",
-            "--no-banner",
-            "--log-level",
-            "error",
-            "--config",
-            str(RULES),
-        ]
-        if cfg.linked:
-            # As Sentinel's scan: the repository cannot allow a match away.
-            command += ["--gitleaks-ignore-path", os.devnull, "--ignore-gitleaks-allow"]
-        command.append(".")
-        done = subprocess.run(
-            command,
-            cwd=cfg.repo,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-        if done.returncode != 0 or not report.exists():
-            raise Stop(f"Gitleaks could not finish ({mode}). Nothing was reported.")
-        try:
-            found = json.loads(report.read_text() or "[]")
-        except ValueError:
-            raise Stop("Gitleaks wrote a report that could not be read.") from None
-        finally:
-            report.unlink(missing_ok=True)
+    # The report comes back on a pipe ("-" is standard output), so the
+    # values in it are never written to the runner's disk.
+    command = [
+        cfg.gitleaks,
+        mode,
+        *extra,
+        "--report-format",
+        "json",
+        "--report-path",
+        "-",
+        "--exit-code",
+        "0",
+        "--no-banner",
+        "--log-level",
+        "error",
+        "--config",
+        str(RULES),
+    ]
+    if cfg.linked:
+        # As Sentinel's scan: the repository cannot allow a match away.
+        command += ["--gitleaks-ignore-path", os.devnull, "--ignore-gitleaks-allow"]
+    command.append(".")
+    done = subprocess.run(
+        command,
+        cwd=cfg.repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if done.returncode != 0:
+        raise Stop(f"Gitleaks could not finish ({mode}). Nothing was reported.")
+    try:
+        found = json.loads(done.stdout.decode() or "[]")
+    except ValueError:
+        raise Stop("Gitleaks wrote a report that could not be read.") from None
     return found if isinstance(found, list) else []
 
 
@@ -376,13 +379,17 @@ def mask(values: list[str]) -> None:
 # Dumps ----------------------------------------------------------------------
 
 
-def find_dumps(cfg: Settings, commits: int) -> tuple[list[dumps.Dump], Optional[str]]:
+def find_dumps(
+    cfg: Settings, commits: int
+) -> tuple[list[dumps.Dump], Optional[str], int]:
+    """The dumps found, why the check did not finish (or None), and how many
+    files it could not read (Sentinel's scan reports those as no finding)."""
     try:
         result = dumps.run_isolated(cfg.repo, commits, DUMP_SECONDS)
     except dumps.CheckFailed as exc:
-        return [], str(exc) or "failed"
+        return [], str(exc) or "failed", 0
     note = "incomplete" if result.truncated else None
-    return result.dumps, note
+    return result.dumps, note, len(result.withheld)
 
 
 def dump_report(item: dumps.Dump) -> dict[str, Any]:
@@ -514,13 +521,18 @@ def main() -> int:
         print(f"::error::{exc}", flush=True)
         return 1
 
-    found_dumps, dump_note = find_dumps(cfg, commits)
+    found_dumps, dump_note, unread = find_dumps(cfg, commits)
     notes: list[str] = []
+    if unread:
+        notes.append(
+            f"{unread} compressed file{'s' if unread != 1 else ''} could not be "
+            "read to check for a database dump, as in Sentinel's own scan."
+        )
     if dump_note:
         notes.append(
             "The database dump check did not finish"
             + (" in full" if dump_note == "incomplete" else "")
-            + ", so the check fails and nothing is reported to Sentinel."
+            + ", so the check fails."
         )
 
     # No path reported or shown may hold a value found in this run.
@@ -546,9 +558,13 @@ def main() -> int:
         "skip" if f["kind"] == "database_dump" and f["data_class"] == "test" else "report"
         for f in findings
     ]
-    # An unfinished dump check is never reported: Sentinel would read the
-    # dumps it missed as gone.
-    if cfg.linked and not dump_note:
+    # A partial report is never sent: Sentinel would read what it leaves
+    # out (an unfinished dump check, findings over the limit, a dump whose
+    # path holds a secret) as gone.
+    partial = bool(dump_note or left_out or hidden)
+    if cfg.linked and partial:
+        notes.append("Not reported to Sentinel: this run's result is not complete.")
+    elif cfg.linked:
         token = oidc_token(cfg.audience)
         if token is None:
             notes.append(
@@ -591,6 +607,10 @@ def main() -> int:
         status = "Failing" if bad else ("Marked safe" if cfg.linked and answer == "skip" and item["kind"] == "secret" else "Not failing")
         table.append((what, where, detail, status))
     write_summary(summary(table, notes))
+    if dump_note:
+        # The check did not finish: never a pass, whatever fail-on-findings says.
+        print("::error::The database dump check did not finish.", flush=True)
+        return 1
     if failing and cfg.fail:
         print("::error::The secret scan failed. See the job summary.", flush=True)
         return 1
