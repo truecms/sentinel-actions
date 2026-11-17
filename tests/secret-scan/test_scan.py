@@ -354,6 +354,19 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(len(json.loads(Stub.seen[-1]["raw"])["findings"]), 1)
         self.assert_value_hidden(done, text)
 
+    def test_gitattributes_cannot_hide_a_changed_file(self):
+        repo = make_repo({".gitattributes": "*.cfg -diff binary\n"})
+        base = sh(repo, "rev-parse", "HEAD")
+        (repo / "app.cfg").write_text(SECRET_LINE)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "add")
+        sh(repo, "rm", "-q", "app.cfg")
+        sh(repo, "commit", "-qm", "remove")
+        event = {"ref": "refs/heads/main", "before": base, "after": sh(repo, "rev-parse", "HEAD")}
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 1, text)
+        self.assert_value_hidden(done, text)
+
     def test_a_push_whose_old_commits_are_gone_is_not_reported(self):
         repo = make_repo({"settings.php": "fine\n"})
         head = sh(repo, "rev-parse", "HEAD")

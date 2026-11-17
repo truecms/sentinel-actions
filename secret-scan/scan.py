@@ -274,9 +274,10 @@ def commit_range(repo: Path, history: int) -> tuple[list[str], int, str]:
         wanted = set(git(repo, "rev-list", f"{base}..{head}").split())
         commits, whole = _reading(repo, wanted)
         return [f"{base}..{head}"], commits, "whole" if whole else "over_limit"
-    if not pull and reachable(repo, head):
-        # A new branch, or a force push whose old commits are gone: the
-        # commits on this branch and on no other branch the checkout has.
+    if not pull and base == ZERO and reachable(repo, head):
+        # A new branch: the commits on it and on no other branch the
+        # checkout has. (A force push whose old commits are gone cannot
+        # tell which commits are new, so it reads a window and is not sent.)
         ref = str(payload.get("ref") or "")
         mine = "refs/remotes/origin/" + ref.removeprefix("refs/heads/")
         others = [
@@ -536,7 +537,9 @@ def main() -> int:
             cfg.gitleaks = install_gitleaks()
         log_opts, commits, covered = commit_range(cfg.repo, cfg.history)
         with ignore_file_aside(cfg):
-            rows = run_gitleaks(cfg, "git", ["--log-opts", log_opts[0]])
+            # --text: a repository's .gitattributes (binary, -diff) cannot
+            # keep a file's changes out of the patches Gitleaks reads.
+            rows = run_gitleaks(cfg, "git", ["--log-opts", f"--text {log_opts[0]}"])
             rows += run_gitleaks(cfg, "dir", [])
         found = secrets_of(rows)
         del rows
