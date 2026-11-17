@@ -1,0 +1,19 @@
+# Sentinel secret scan. Copy to .github/workflows/sentinel-secrets.yml.
+# On its own: remove id-token and site-uuid. With Sentinel: turn on "Accept
+# reports from GitHub Actions" on the site first, and put its UUID below.
+name: Sentinel secrets
+on: [pull_request, push]
+permissions:
+  contents: read
+  id-token: write   # lets GitHub prove the repository to Sentinel
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: truecms/sentinel-actions/secret-scan@v1.2.0
+        with:
+          site-uuid: 00000000-0000-0000-0000-000000000000

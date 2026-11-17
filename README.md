@@ -7,6 +7,7 @@ image, and sends Sentinel only what that check needs.
 | Action | What it does | GitHub Actions | GitLab CI |
 |---|---|---|---|
 | [Upgrade scan](upgrade-scan) | Drupal upgrade readiness from Upgrade Status, without installing it on production. | `truecms/sentinel-actions/upgrade-scan@v1.1.0` | `upgrade-scan/gitlab.yml` |
+| [Secret scan](secret-scan) | Secrets and committed database dumps in each pull request and push, on its own or reporting to Sentinel. | `truecms/sentinel-actions/secret-scan@v1.2.0` | — |
 | [WireGuard SSH](wireguard-ssh) | Connect a Linux workflow runner to a WireGuard peer and verify an SSH destination uses the tunnel. | `truecms/sentinel-actions/wireguard-ssh@v1.1.0` | — |
 
 For a standalone workflow template, see the [private Drupal database image example](examples/drupal-db-image/README.md).
@@ -42,7 +43,13 @@ an AI chat. The actions never print them.
 shellcheck scripts/*.sh */scan.sh tests/*/stubs/*
 bats tests/*/*.bats
 node --test tests/wireguard-ssh.test.js
+SENTINEL_TEST_GITLEAKS=/path/to/gitleaks python3 -m unittest discover -s tests/secret-scan
 ```
+
+`secret-scan/gitleaks.toml` and `secret-scan/dumps.py` are Sentinel's own
+files, copied unchanged. Sentinel's repository records their SHA-256 for each
+release and fails its lint when they drift: change them there first, then
+copy them here in a new release.
 
 To release: run `scripts/pin-release.sh vX.Y.Z`, commit, then tag `vX.Y.Z`.
 
