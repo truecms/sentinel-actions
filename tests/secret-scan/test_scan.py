@@ -10,6 +10,8 @@ Run: SENTINEL_TEST_GITLEAKS=/path/to/gitleaks python3 -m unittest discover tests
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -19,6 +21,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "secret-scan" / "scan.py"
@@ -193,6 +196,58 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(len(json.loads(Stub.seen[-1]["raw"])["findings"]), 1)
         # The file is back where it was.
         self.assertTrue((repo / ".gitleaksignore").exists())
+
+    def test_linked_does_not_follow_a_linked_gitleaksignore(self):
+        repo = make_repo({"settings.php": SECRET_LINE})
+        (repo / "ignores.txt").write_text("settings.php:stripe-access-token:1\n")
+        os.symlink("ignores.txt", repo / ".gitleaksignore")
+        Stub.answer = ["report"]
+        done, text = self.run_scan(repo, linked=True)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertEqual(len(json.loads(Stub.seen[-1]["raw"])["findings"]), 1)
+        # The link is back, still a link to the same file.
+        self.assertEqual(os.readlink(repo / ".gitleaksignore"), "ignores.txt")
+        self.assertTrue((repo / "ignores.txt").is_file())
+
+    def test_an_unfinished_dump_check_fails_and_is_not_reported(self):
+        repo = make_repo({})
+        temp = Path(tempfile.mkdtemp(prefix="secret-scan-run-"))
+        summary = temp / "summary.md"
+        environment = {
+            "GITHUB_WORKSPACE": str(repo),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_SHA": sh(repo, "rev-parse", "HEAD"),
+            "RUNNER_TEMP": str(temp),
+            "SENTINEL_GITLEAKS": GITLEAKS,
+            "SENTINEL_SITE_UUID": SITE,
+            "SENTINEL_API_URL": f"http://127.0.0.1:{self.port}",
+            "ACTIONS_ID_TOKEN_REQUEST_URL": f"http://127.0.0.1:{self.port}/token",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
+        }
+        sys.path.insert(0, str(SCRIPT.parent))
+        try:
+            import scan  # noqa: PLC0415
+
+            with mock.patch.dict(os.environ, environment), mock.patch.object(
+                scan, "find_dumps", return_value=([], "incomplete")
+            ), contextlib.redirect_stdout(io.StringIO()):
+                code = scan.main()
+        finally:
+            sys.path.remove(str(SCRIPT.parent))
+        self.assertEqual(code, 1)
+        self.assertEqual(Stub.seen, [])
+        self.assertIn("did not finish in full", summary.read_text())
+
+    def test_a_dump_whose_path_holds_a_found_secret_is_never_shown_or_sent(self):
+        repo = make_repo({"settings.php": SECRET_LINE, f"backup/{VALUE}.sql": DUMP})
+        Stub.answer = ["report"]
+        done, text = self.run_scan(repo, linked=True)
+        self.assertEqual(done.returncode, 1, text)
+        kinds = [f["kind"] for f in json.loads(Stub.seen[-1]["raw"])["findings"]]
+        self.assertEqual(kinds, ["secret"])
+        self.assertIn("the path holds a secret", text)
+        self.assert_value_hidden(done, text)
 
     def test_linked_sends_the_report_and_skips_what_sentinel_marked_safe(self):
         repo = make_repo({"settings.php": SECRET_LINE})

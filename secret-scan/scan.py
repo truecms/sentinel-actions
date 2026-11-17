@@ -62,6 +62,7 @@ RULES = HERE / "gitleaks.toml"
 DEFAULT_API_URL = "https://ingest.sentinelconnector.io"
 DEFAULT_AUDIENCE = "sentinel-secret-scan"
 DEFAULT_HISTORY = 50
+MAX_RANGE = 10_000
 # Sentinel takes at most this many findings in one report.
 MAX_FINDINGS = 500
 DUMP_SECONDS = 300.0
@@ -256,7 +257,9 @@ def commit_range(repo: Path, history: int) -> tuple[list[str], int]:
         base, head = str(payload.get("before") or ""), str(payload.get("after") or "")
     if reachable(repo, base) and reachable(repo, head):
         count = git(repo, "rev-list", "--count", f"{base}..{head}")
-        commits = max(1, min(int(count) if count.isdigit() else history, history))
+        # The dump check reads the whole range too, as Gitleaks does;
+        # history-commits is only for runs with no range.
+        commits = max(1, min(int(count) if count.isdigit() else history, MAX_RANGE))
         return [f"{base}..{head}"], commits
     return [f"-n {history}"], history
 
@@ -309,9 +312,20 @@ def ignore_file_aside(cfg: Settings) -> Iterator[None]:
     with ``--gitleaks-ignore-path``, and a commit must not be able to hide a
     finding from Sentinel. It is put back however the scan ends."""
     path = cfg.repo / ".gitleaksignore"
-    if not cfg.linked or not path.is_file() or path.is_symlink():
+    if not cfg.linked or not os.path.lexists(path):
         yield
         return
+    if path.is_symlink():
+        # A link is moved aside as a link, never followed.
+        target = os.readlink(path)
+        path.unlink()
+        try:
+            yield
+        finally:
+            os.symlink(target, path)
+        return
+    if not path.is_file():
+        raise Stop(".gitleaksignore is not a file.")
     kept = path.read_bytes()
     mode = path.stat().st_mode
     path.unlink()
@@ -505,7 +519,21 @@ def main() -> int:
     if dump_note:
         notes.append(
             "The database dump check did not finish"
-            + (" in full." if dump_note == "incomplete" else ".")
+            + (" in full" if dump_note == "incomplete" else "")
+            + ", so the check fails and nothing is reported to Sentinel."
+        )
+
+    # No path reported or shown may hold a value found in this run.
+    values = [s.value for s in found]
+    for secret in found:
+        if any(v in secret.path for v in values):
+            secret.path = ""
+    hidden = [d for d in found_dumps if any(v in d.path for v in values)]
+    found_dumps = [d for d in found_dumps if d not in hidden]
+    if hidden:
+        notes.append(
+            f"{len(hidden)} database dump{'s' if len(hidden) != 1 else ''} "
+            "not shown or reported: the path holds a secret. Rename the file."
         )
 
     secrets_part = [s.report() for s in found]
@@ -518,7 +546,9 @@ def main() -> int:
         "skip" if f["kind"] == "database_dump" and f["data_class"] == "test" else "report"
         for f in findings
     ]
-    if cfg.linked:
+    # An unfinished dump check is never reported: Sentinel would read the
+    # dumps it missed as gone.
+    if cfg.linked and not dump_note:
         token = oidc_token(cfg.audience)
         if token is None:
             notes.append(
@@ -542,7 +572,7 @@ def main() -> int:
         notes.append(f"{left_out} more findings were not reported; they fail the check.")
 
     table: list[tuple[str, str, str, str]] = []
-    failing = left_out
+    failing = left_out + len(hidden) + (1 if dump_note else 0)
     for item, answer in zip(findings, answers):
         bad = answer != "skip"
         failing += bad
@@ -562,7 +592,7 @@ def main() -> int:
         table.append((what, where, detail, status))
     write_summary(summary(table, notes))
     if failing and cfg.fail:
-        print(f"::error::{failing} finding{'s' if failing != 1 else ''} to fix. See the job summary.", flush=True)
+        print("::error::The secret scan failed. See the job summary.", flush=True)
         return 1
     return 0
 
