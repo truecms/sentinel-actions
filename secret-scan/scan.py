@@ -362,38 +362,26 @@ def ignore_file_aside(cfg: Settings) -> Iterator[Optional[str]]:
 
 
 def from_another_parent(repo: Path, row: dict[str, Any], base: Optional[str]) -> bool:
-    """A match a merge shows against its first parent that its other parent
-    already had, where that parent is already in the base of this run (a
-    pull request merging its base branch in): it is the base's, not this
-    run's. A value added while resolving the merge is in no parent, and a
-    merge bringing back a value from a branch the base never had is this
-    run's: both stay."""
+    """A match a merge shows against its first parent that the run's base
+    still has in the same file (a pull request merging its base branch in):
+    it is the base's, not this run's. A value added while resolving the
+    merge, or one the base no longer has, is this run's and stays."""
     if not base:
         return False
     commit = str(row.get("Commit") or "")
     path = str(row.get("File") or "")
-    # The whole match (the assignment, not only the value): a parent that
-    # merely mentions the value elsewhere did not have this finding.
+    # The whole match (the assignment, not only the value).
     value = str(row.get("Match") or row.get("Secret") or "").encode()
     if not SHA.match(commit) or not path or not value:
         return False
-    parents = git(repo, "rev-list", "--parents", "-n1", commit).split()[2:]
-    for parent in parents:
-        on_base = subprocess.run(
-            ["git", "-C", str(repo), "merge-base", "--is-ancestor", parent, base],
-            capture_output=True,
-            check=False,
-        )
-        if on_base.returncode != 0:
-            continue
-        done = subprocess.run(
-            ["git", "-C", str(repo), "cat-file", "blob", f"{parent}:{path}"],
-            capture_output=True,
-            check=False,
-        )
-        if done.returncode == 0 and value in done.stdout:
-            return True
-    return False
+    if len(git(repo, "rev-list", "--parents", "-n1", commit).split()) < 3:
+        return False
+    done = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "blob", f"{base}:{path}"],
+        capture_output=True,
+        check=False,
+    )
+    return done.returncode == 0 and value in done.stdout
 
 
 def secrets_of(rows: list[dict[str, Any]]) -> list[Secret]:
