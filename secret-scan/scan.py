@@ -361,11 +361,15 @@ def ignore_file_aside(cfg: Settings) -> Iterator[Optional[str]]:
         os.rename(aside, path)
 
 
-def from_another_parent(repo: Path, row: dict[str, Any]) -> bool:
+def from_another_parent(repo: Path, row: dict[str, Any], base: Optional[str]) -> bool:
     """A match a merge shows against its first parent that its other parent
-    already had: it came in from the branch merged, not from this run's
-    commits, so it is not this run's finding. A value added while resolving
-    the merge is in no parent and stays."""
+    already had, where that parent is already in the base of this run (a
+    pull request merging its base branch in): it is the base's, not this
+    run's. A value added while resolving the merge is in no parent, and a
+    merge bringing back a value from a branch the base never had is this
+    run's: both stay."""
+    if not base:
+        return False
     commit = str(row.get("Commit") or "")
     path = str(row.get("File") or "")
     # The whole match (the assignment, not only the value): a parent that
@@ -375,6 +379,13 @@ def from_another_parent(repo: Path, row: dict[str, Any]) -> bool:
         return False
     parents = git(repo, "rev-list", "--parents", "-n1", commit).split()[2:]
     for parent in parents:
+        on_base = subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", parent, base],
+            capture_output=True,
+            check=False,
+        )
+        if on_base.returncode != 0:
+            continue
         done = subprocess.run(
             ["git", "-C", str(repo), "cat-file", "blob", f"{parent}:{path}"],
             capture_output=True,
@@ -557,6 +568,8 @@ def main() -> int:
         if not cfg.gitleaks:
             cfg.gitleaks = install_gitleaks()
         log_opts, commits, covered = commit_range(cfg.repo, cfg.history)
+        # The run's base commit, when it reads a range.
+        base = log_opts[0].split("..", 1)[0] if ".." in log_opts[0] else None
         with ignore_file_aside(cfg) as moved:
             # --text: a repository's .gitattributes (binary, -diff) cannot
             # keep a file's changes out of the patches Gitleaks reads. A
@@ -565,7 +578,7 @@ def main() -> int:
             rows = [
                 row
                 for row in run_gitleaks(cfg, "git", ["--log-opts", opts])
-                if not (isinstance(row, dict) and from_another_parent(cfg.repo, row))
+                if not (isinstance(row, dict) and from_another_parent(cfg.repo, row, base))
             ]
             tree = run_gitleaks(cfg, "dir", [])
         # Only the tree pass reads the renamed file; history has real paths.

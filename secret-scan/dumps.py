@@ -793,7 +793,10 @@ def check(
             break
 
     history = _history(repo, history_commits) if checkout else {}
-    in_tree = {d.path for d in dumps}
+    # A real dump in the tree at a path is already reported; a test fixture
+    # there must not hide an older real dump at the same path.
+    in_tree = {d.path for d in dumps if d.data_class != CLASS_TEST}
+    test_in_tree = {d.path for d in dumps if d.data_class == CLASS_TEST}
     stop = False
     for path, versions in history.items():
         if stop:
@@ -850,7 +853,7 @@ def check(
             if not add(path, blob, size, found[0], found[1], commit):
                 stop = True
             break
-        if first_test is not None and not stop:
+        if first_test is not None and not stop and path not in test_in_tree:
             commit, blob, size, found = first_test
             if not add(path, blob, size, found[0], found[1], commit):
                 stop = True

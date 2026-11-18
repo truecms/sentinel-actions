@@ -411,6 +411,28 @@ class ScanTest(unittest.TestCase):
         done, text = self.run_scan(repo, event=event)
         self.assertEqual(done.returncode, 0, text)
 
+    def test_a_merge_that_brings_a_secret_back_into_the_base_is_found(self):
+        repo = make_repo({"f.txt": "a\n"})
+        sh(repo, "checkout", "-qb", "feature")
+        (repo / "keys.php").write_text(SECRET_LINE)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "feature keeps a key")
+        sh(repo, "checkout", "-q", "-")
+        (repo / "g.txt").write_text("main\n")
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "main")
+        before = sh(repo, "rev-parse", "HEAD")
+        sh(repo, "merge", "-q", "--no-edit", "feature")
+        sh(repo, "rm", "-q", "keys.php")
+        sh(repo, "commit", "-qm", "drop")
+        # The push holds only the merge and the drop: the key's own commit
+        # is outside it, but the merge brought it into main.
+        event = {"ref": "refs/heads/main", "before": before, "after": sh(repo, "rev-parse", "HEAD")}
+        repo_feature = sh(repo, "rev-parse", "feature")
+        sh(repo, "update-ref", "refs/remotes/origin/feature", repo_feature)
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 1, text)
+
     def test_linked_still_reads_what_gitleaksignore_holds(self):
         repo = make_repo({".gitleaksignore": SECRET_LINE})
         Stub.answer = ["report"]
