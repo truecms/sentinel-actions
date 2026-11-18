@@ -6,6 +6,9 @@ that every IPv4 address for the SSH host routes through the tunnel, confirms the
 SSH port is reachable, and removes the tunnel and temporary client file after
 the job, including when later steps fail.
 
+For a full walk-through, see the guide
+[Deploy from GitHub Actions over WireGuard and SSH](https://sentinelconnector.io/guides/github-actions-wireguard-ssh).
+
 The runner needs passwordless `sudo`. Use a Linux runner directly; a job
 container cannot configure the runner host's network routes. The action installs
 `wireguard-tools` and `iproute2` with apt when they are missing. If the peer
