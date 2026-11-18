@@ -7,7 +7,7 @@ SSH port is reachable, and removes the tunnel and temporary client file after
 the job, including when later steps fail.
 
 For a full walk-through, see the guide
-[Deploy from GitHub Actions over WireGuard and SSH](https://sentinelconnector.io/guides/github-actions-wireguard-ssh).
+[Keep SSH private for GitHub Actions deployments with WireGuard](https://sentinelconnector.io/guides/github-actions-wireguard-ssh).
 
 The runner needs passwordless `sudo`. Use a Linux runner directly; a job
 container cannot configure the runner host's network routes. The action installs
