@@ -538,8 +538,10 @@ def main() -> int:
         log_opts, commits, covered = commit_range(cfg.repo, cfg.history)
         with ignore_file_aside(cfg):
             # --text: a repository's .gitattributes (binary, -diff) cannot
-            # keep a file's changes out of the patches Gitleaks reads.
-            rows = run_gitleaks(cfg, "git", ["--log-opts", f"--text {log_opts[0]}"])
+            # keep a file's changes out of the patches Gitleaks reads. A
+            # merge's changes against its first parent are read too.
+            opts = f"--text --diff-merges=first-parent {log_opts[0]}"
+            rows = run_gitleaks(cfg, "git", ["--log-opts", opts])
             rows += run_gitleaks(cfg, "dir", [])
         found = secrets_of(rows)
         del rows

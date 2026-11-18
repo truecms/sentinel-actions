@@ -367,6 +367,42 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(done.returncode, 1, text)
         self.assert_value_hidden(done, text)
 
+    def test_a_secret_and_a_dump_added_in_a_merge_are_found(self):
+        repo = make_repo({"f.txt": "a\n"})
+        base = sh(repo, "rev-parse", "HEAD")
+        sh(repo, "checkout", "-qb", "side")
+        (repo / "f.txt").write_text("side\n")
+        sh(repo, "commit", "-qam", "side")
+        sh(repo, "checkout", "-q", "-")
+        (repo / "f.txt").write_text("main\n")
+        sh(repo, "commit", "-qam", "main")
+        subprocess.run(["git", "-C", str(repo), "merge", "-q", "side"], capture_output=True)
+        (repo / "f.txt").write_text(SECRET_LINE)
+        (repo / "merge.sql").write_text(DUMP)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "merge")
+        sh(repo, "rm", "-q", "f.txt", "merge.sql")
+        sh(repo, "commit", "-qm", "remove")
+        event = {"ref": "refs/heads/main", "before": base, "after": sh(repo, "rev-parse", "HEAD")}
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertIn("Secret (", text)
+        self.assertIn("merge.sql", text)
+        self.assert_value_hidden(done, text)
+
+    def test_a_dump_overwritten_at_the_same_path_is_found(self):
+        repo = make_repo({})
+        base = sh(repo, "rev-parse", "HEAD")
+        (repo / "backup.sql").write_text(DUMP)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "add")
+        (repo / "backup.sql").write_text("-- nothing here\n")
+        sh(repo, "commit", "-qam", "clean")
+        event = {"ref": "refs/heads/main", "before": base, "after": sh(repo, "rev-parse", "HEAD")}
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertIn("backup.sql", text)
+
     def test_a_push_whose_old_commits_are_gone_is_not_reported(self):
         repo = make_repo({"settings.php": "fine\n"})
         head = sh(repo, "rev-parse", "HEAD")

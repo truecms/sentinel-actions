@@ -570,9 +570,11 @@ def _tracked(repo: Path) -> tuple[dict[str, str], bool]:
     return files, undecodable
 
 
-def _history(repo: Path, commits: int) -> dict[str, tuple[str, str]]:
-    """Paths added or changed in the last ``commits`` commits, newest first:
-    ``{path: (commit, blob)}`` for the newest version of each."""
+def _history(repo: Path, commits: int) -> dict[str, list[tuple[str, str]]]:
+    """Paths added or changed in the last ``commits`` commits:
+    ``{path: [(commit, blob), ...]}``, every distinct version, newest first.
+    A merge counts with what it changed against its first parent, so a
+    file added while resolving a conflict is read too (#3610)."""
     if commits <= 0:
         return {}
     # The last ``commits`` commits first: with a diff filter, ``log -n``
@@ -585,6 +587,7 @@ def _history(repo: Path, commits: int) -> dict[str, tuple[str, str]]:
         "log",
         "--stdin",
         "--no-walk=unsorted",
+        "--diff-merges=first-parent",
         "--diff-filter=AM",
         "--no-renames",
         "--raw",
@@ -593,7 +596,7 @@ def _history(repo: Path, commits: int) -> dict[str, tuple[str, str]]:
         "-z",
         stdin=recent,
     )
-    found: dict[str, tuple[str, str]] = {}
+    found: dict[str, list[tuple[str, str]]] = {}
     for record in out.split(b"\x01"):
         if not record:
             continue
@@ -610,8 +613,10 @@ def _history(repo: Path, commits: int) -> dict[str, tuple[str, str]]:
                 path = name.decode("utf-8")
             except UnicodeDecodeError:
                 continue
-            if path not in found:
-                found[path] = (commit.decode(), fields[3].decode())
+            blob = fields[3].decode()
+            versions = found.setdefault(path, [])
+            if all(blob != seen for _, seen in versions):
+                versions.append((commit.decode(), blob))
     return found
 
 
@@ -788,38 +793,50 @@ def check(
             break
 
     history = _history(repo, history_commits) if checkout else {}
-    for path, (commit, blob) in history.items():
-        if path in tracked:
+    in_tree = {d.path for d in dumps}
+    stop = False
+    for path, versions in history.items():
+        if stop:
+            break
+        # A dump in the tree at this path is already reported.
+        if path in in_tree:
             continue
         # A dump under any name is looked for in history too, as in the tree.
         named = _named(path)
-        if not named:
-            if sniffed >= MAX_SNIFFED:
+        # Every older version, newest first, until one is a dump: a dump
+        # overwritten at the same path, or still tracked under its name with
+        # other content today, stays in the history (#3578, #3608).
+        for commit, blob in versions:
+            if blob == tracked.get(path):
+                continue
+            if not named:
+                if sniffed >= MAX_SNIFFED:
+                    truncated = True
+                    break
+                sniffed += 1
+            try:
+                size = _blob_size(repo, blob)
+                if size == 0:
+                    continue
+                opener, whole = _history_opener(repo, blob, size)
+                found = _inspect(path, opener, size, named, read_bytes)
+            except (
+                _Unsure,
+                CheckFailed,
+                ValueError,
+                OSError,
+                subprocess.SubprocessError,
+            ):
                 truncated = True
                 continue
-            sniffed += 1
-        try:
-            size = _blob_size(repo, blob)
-            if size == 0:
+            if not whole and found is None:
+                # A large zip file from history that could not be opened: it
+                # may hold a dump under another name.
+                truncated = True
+            if found is None:
                 continue
-            opener, whole = _history_opener(repo, blob, size)
-            found = _inspect(path, opener, size, named, read_bytes)
-        except (
-            _Unsure,
-            CheckFailed,
-            ValueError,
-            OSError,
-            subprocess.SubprocessError,
-        ):
-            truncated = True
-            continue
-        if not whole and found is None:
-            # A large zip file from history that could not be opened: it may
-            # hold a dump under another name.
-            truncated = True
-        if found is None:
-            continue
-        if not add(path, blob, size, found[0], found[1], commit):
+            if not add(path, blob, size, found[0], found[1], commit):
+                stop = True
             break
     return Result(dumps=dumps, truncated=truncated, withheld=withheld, unsafe=unsafe)
 

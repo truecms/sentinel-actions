@@ -93,9 +93,8 @@ GitHub's `ubuntu-latest`.
 
 The dump check is Sentinel's own, so it has the same limits as the Deep scan:
 
-- In history it reads the newest version of each file the run's commits
-  added or changed and that is no longer in the checkout. A dump overwritten
-  by a clean file at the same path is not found in history yet.
+- In history it reads each version of the files the run's commits added or
+  changed, merges included, until it finds a dump at that path.
 - For a pull request it reads back from GitHub's merge commit far enough to
   take in every commit of the pull request, so it can also find a dump in a
   base branch commit made since the branch started.
