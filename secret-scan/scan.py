@@ -337,16 +337,17 @@ def run_gitleaks(cfg: Settings, mode: str, extra: list[str]) -> list[dict[str, A
 
 
 @contextlib.contextmanager
-def ignore_file_aside(cfg: Settings) -> Iterator[None]:
+def ignore_file_aside(cfg: Settings) -> Iterator[Optional[str]]:
     """Linked mode: the repository's ``.gitleaksignore`` is renamed while
     Gitleaks runs. Gitleaks 8.30.1 reads it from the folder it scans even
     with ``--gitleaks-ignore-path``, and a commit must not be able to hide a
     finding from Sentinel. It stays in the repository under the name
     Sentinel's own scan uses, so the tree pass still reads what it holds,
-    and is renamed back however the scan ends. A link stays a link."""
+    and is renamed back however the scan ends. A link stays a link. Yields
+    the name it took, or None."""
     path = cfg.repo / ".gitleaksignore"
     if not cfg.linked or not os.path.lexists(path):
-        yield
+        yield None
         return
     # A repository cannot keep its file in place by taking the name.
     aside, n = cfg.repo / IGNORE_ASIDE, 0
@@ -355,7 +356,7 @@ def ignore_file_aside(cfg: Settings) -> Iterator[None]:
         aside = cfg.repo / f"{IGNORE_ASIDE}-{n}"
     os.rename(path, aside)
     try:
-        yield
+        yield aside.name
     finally:
         os.rename(aside, path)
 
@@ -367,7 +368,9 @@ def from_another_parent(repo: Path, row: dict[str, Any]) -> bool:
     the merge is in no parent and stays."""
     commit = str(row.get("Commit") or "")
     path = str(row.get("File") or "")
-    value = str(row.get("Secret") or row.get("Match") or "").encode()
+    # The whole match (the assignment, not only the value): a parent that
+    # merely mentions the value elsewhere did not have this finding.
+    value = str(row.get("Match") or row.get("Secret") or "").encode()
     if not SHA.match(commit) or not path or not value:
         return False
     parents = git(repo, "rev-list", "--parents", "-n1", commit).split()[2:]
@@ -382,7 +385,7 @@ def from_another_parent(repo: Path, row: dict[str, Any]) -> bool:
     return False
 
 
-def secrets_of(rows: list[dict[str, Any]]) -> list[Secret]:
+def secrets_of(rows: list[dict[str, Any]], moved: Optional[str] = None) -> list[Secret]:
     out: dict[tuple[Optional[str], str, str], Secret] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -394,7 +397,7 @@ def secrets_of(rows: list[dict[str, Any]]) -> list[Secret]:
         if rule and not RULE.match(rule):
             rule = None
         path = normalise(str(row.get("File") or ""))
-        if re.fullmatch(re.escape(IGNORE_ASIDE) + r"(-[0-9]+)?", path):
+        if moved and path == moved:
             # The repository's .gitleaksignore, read while it was renamed.
             path = ".gitleaksignore"
         if value in path:
@@ -557,7 +560,7 @@ def main() -> int:
         if not cfg.gitleaks:
             cfg.gitleaks = install_gitleaks()
         log_opts, commits, covered = commit_range(cfg.repo, cfg.history)
-        with ignore_file_aside(cfg):
+        with ignore_file_aside(cfg) as moved:
             # --text: a repository's .gitattributes (binary, -diff) cannot
             # keep a file's changes out of the patches Gitleaks reads. A
             # merge's changes against its first parent are read too.
@@ -568,7 +571,7 @@ def main() -> int:
                 if not (isinstance(row, dict) and from_another_parent(cfg.repo, row))
             ]
             rows += run_gitleaks(cfg, "dir", [])
-        found = secrets_of(rows)
+        found = secrets_of(rows, moved)
         del rows
         mask([s.value for s in found])
     except Stop as exc:

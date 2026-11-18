@@ -421,6 +421,12 @@ class ScanTest(unittest.TestCase):
         self.assertFalse((repo / ".gitleaksignore.sentinel-aside").exists())
         self.assert_value_hidden(done, text)
 
+    def test_a_file_that_only_shares_the_aside_name_keeps_its_name(self):
+        repo = make_repo({".gitleaksignore.sentinel-aside": SECRET_LINE})
+        done, text = self.run_scan(repo)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertIn(".gitleaksignore.sentinel-aside:1", text)
+
     def test_a_dump_overwritten_at_the_same_path_is_found(self):
         repo = make_repo({})
         base = sh(repo, "rev-parse", "HEAD")
