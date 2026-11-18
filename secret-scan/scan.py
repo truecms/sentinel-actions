@@ -62,6 +62,9 @@ RULES = HERE / "gitleaks.toml"
 DEFAULT_API_URL = "https://ingest.sentinelconnector.io"
 DEFAULT_AUDIENCE = "sentinel-secret-scan"
 DEFAULT_HISTORY = 50
+# Where linked mode keeps the repository's .gitleaksignore while Gitleaks
+# runs: the name Sentinel's scan uses, so both give one fingerprint.
+IGNORE_ASIDE = ".gitleaksignore.sentinel-aside"
 MAX_RANGE = 10_000
 # Sentinel takes at most this many findings in one report.
 MAX_FINDINGS = 500
@@ -334,34 +337,51 @@ def run_gitleaks(cfg: Settings, mode: str, extra: list[str]) -> list[dict[str, A
 
 
 @contextlib.contextmanager
-def ignore_file_aside(cfg: Settings) -> Iterator[None]:
-    """Linked mode: the repository's ``.gitleaksignore`` is set aside while
+def ignore_file_aside(cfg: Settings) -> Iterator[Optional[str]]:
+    """Linked mode: the repository's ``.gitleaksignore`` is renamed while
     Gitleaks runs. Gitleaks 8.30.1 reads it from the folder it scans even
     with ``--gitleaks-ignore-path``, and a commit must not be able to hide a
-    finding from Sentinel. It is put back however the scan ends."""
+    finding from Sentinel. It stays in the repository under the name
+    Sentinel's own scan uses, so the tree pass still reads what it holds,
+    and is renamed back however the scan ends. A link stays a link. Yields
+    the name it took, or None."""
     path = cfg.repo / ".gitleaksignore"
     if not cfg.linked or not os.path.lexists(path):
-        yield
+        yield None
         return
-    if path.is_symlink():
-        # A link is moved aside as a link, never followed.
-        target = os.readlink(path)
-        path.unlink()
-        try:
-            yield
-        finally:
-            os.symlink(target, path)
-        return
-    if not path.is_file():
-        raise Stop(".gitleaksignore is not a file.")
-    kept = path.read_bytes()
-    mode = path.stat().st_mode
-    path.unlink()
+    # A repository cannot keep its file in place by taking the name.
+    aside, n = cfg.repo / IGNORE_ASIDE, 0
+    while os.path.lexists(aside):
+        n += 1
+        aside = cfg.repo / f"{IGNORE_ASIDE}-{n}"
+    os.rename(path, aside)
     try:
-        yield
+        yield aside.name
     finally:
-        path.write_bytes(kept)
-        path.chmod(mode & 0o777)
+        os.rename(aside, path)
+
+
+def from_another_parent(repo: Path, row: dict[str, Any], base: Optional[str]) -> bool:
+    """A match a merge shows against its first parent that the run's base
+    still has in the same file (a pull request merging its base branch in):
+    it is the base's, not this run's. A value added while resolving the
+    merge, or one the base no longer has, is this run's and stays."""
+    if not base:
+        return False
+    commit = str(row.get("Commit") or "")
+    path = str(row.get("File") or "")
+    # The whole match (the assignment, not only the value).
+    value = str(row.get("Match") or row.get("Secret") or "").encode()
+    if not SHA.match(commit) or not path or not value:
+        return False
+    if len(git(repo, "rev-list", "--parents", "-n1", commit).split()) < 3:
+        return False
+    done = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "blob", f"{base}:{path}"],
+        capture_output=True,
+        check=False,
+    )
+    return done.returncode == 0 and value in done.stdout
 
 
 def secrets_of(rows: list[dict[str, Any]]) -> list[Secret]:
@@ -536,11 +556,24 @@ def main() -> int:
         if not cfg.gitleaks:
             cfg.gitleaks = install_gitleaks()
         log_opts, commits, covered = commit_range(cfg.repo, cfg.history)
-        with ignore_file_aside(cfg):
+        # The run's base commit, when it reads a range.
+        base = log_opts[0].split("..", 1)[0] if ".." in log_opts[0] else None
+        with ignore_file_aside(cfg) as moved:
             # --text: a repository's .gitattributes (binary, -diff) cannot
-            # keep a file's changes out of the patches Gitleaks reads.
-            rows = run_gitleaks(cfg, "git", ["--log-opts", f"--text {log_opts[0]}"])
-            rows += run_gitleaks(cfg, "dir", [])
+            # keep a file's changes out of the patches Gitleaks reads. A
+            # merge's changes against its first parent are read too.
+            opts = f"--text --diff-merges=first-parent {log_opts[0]}"
+            rows = [
+                row
+                for row in run_gitleaks(cfg, "git", ["--log-opts", opts])
+                if not (isinstance(row, dict) and from_another_parent(cfg.repo, row, base))
+            ]
+            tree = run_gitleaks(cfg, "dir", [])
+        # Only the tree pass reads the renamed file; history has real paths.
+        for row in tree:
+            if moved and isinstance(row, dict) and normalise(str(row.get("File") or "")) == moved:
+                row["File"] = ".gitleaksignore"
+        rows += tree
         found = secrets_of(rows)
         del rows
         mask([s.value for s in found])

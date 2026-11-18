@@ -367,6 +367,101 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(done.returncode, 1, text)
         self.assert_value_hidden(done, text)
 
+    def test_a_secret_and_a_dump_added_in_a_merge_are_found(self):
+        repo = make_repo({"f.txt": "a\n"})
+        base = sh(repo, "rev-parse", "HEAD")
+        sh(repo, "checkout", "-qb", "side")
+        (repo / "f.txt").write_text("side\n")
+        sh(repo, "commit", "-qam", "side")
+        sh(repo, "checkout", "-q", "-")
+        (repo / "f.txt").write_text("main\n")
+        sh(repo, "commit", "-qam", "main")
+        subprocess.run(["git", "-C", str(repo), "merge", "-q", "side"], capture_output=True)
+        (repo / "f.txt").write_text(SECRET_LINE)
+        (repo / "merge.sql").write_text(DUMP)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "merge")
+        sh(repo, "rm", "-q", "f.txt", "merge.sql")
+        sh(repo, "commit", "-qm", "remove")
+        event = {"ref": "refs/heads/main", "before": base, "after": sh(repo, "rev-parse", "HEAD")}
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertIn("Secret (", text)
+        self.assertIn("merge.sql", text)
+        self.assert_value_hidden(done, text)
+
+    def test_a_secret_merged_in_from_the_base_is_not_the_pull_requests(self):
+        repo = make_repo({"f.txt": "a\n"})
+        sh(repo, "checkout", "-qb", "feature")
+        (repo / "g.txt").write_text("feature\n")
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "feature")
+        sh(repo, "checkout", "-q", "-")
+        (repo / "base.php").write_text(SECRET_LINE)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "base")
+        # The pull request's base: the base branch's tip, as GitHub sends it.
+        base = sh(repo, "rev-parse", "HEAD")
+        sh(repo, "checkout", "-q", "feature")
+        sh(repo, "merge", "-q", "--no-edit", "-")
+        sh(repo, "rm", "-q", "base.php")
+        sh(repo, "commit", "-qm", "drop")
+        head = sh(repo, "rev-parse", "HEAD")
+        event = {"pull_request": {"number": 5, "base": {"sha": base}, "head": {"sha": head}}}
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 0, text)
+
+    def test_a_merge_that_brings_a_secret_back_into_the_base_is_found(self):
+        repo = make_repo({"f.txt": "a\n"})
+        sh(repo, "checkout", "-qb", "feature")
+        (repo / "keys.php").write_text(SECRET_LINE)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "feature keeps a key")
+        sh(repo, "checkout", "-q", "-")
+        (repo / "g.txt").write_text("main\n")
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "main")
+        before = sh(repo, "rev-parse", "HEAD")
+        sh(repo, "merge", "-q", "--no-edit", "feature")
+        sh(repo, "rm", "-q", "keys.php")
+        sh(repo, "commit", "-qm", "drop")
+        # The push holds only the merge and the drop: the key's own commit
+        # is outside it, but the merge brought it into main.
+        event = {"ref": "refs/heads/main", "before": before, "after": sh(repo, "rev-parse", "HEAD")}
+        repo_feature = sh(repo, "rev-parse", "feature")
+        sh(repo, "update-ref", "refs/remotes/origin/feature", repo_feature)
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 1, text)
+
+    def test_linked_still_reads_what_gitleaksignore_holds(self):
+        repo = make_repo({".gitleaksignore": SECRET_LINE})
+        Stub.answer = ["report"]
+        done, text = self.run_scan(repo, linked=True)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertEqual(len(json.loads(Stub.seen[-1]["raw"])["findings"]), 1)
+        self.assertEqual((repo / ".gitleaksignore").read_text(), SECRET_LINE)
+        self.assertFalse((repo / ".gitleaksignore.sentinel-aside").exists())
+        self.assert_value_hidden(done, text)
+
+    def test_a_file_that_only_shares_the_aside_name_keeps_its_name(self):
+        repo = make_repo({".gitleaksignore.sentinel-aside": SECRET_LINE})
+        done, text = self.run_scan(repo)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertIn(".gitleaksignore.sentinel-aside:1", text)
+
+    def test_a_dump_overwritten_at_the_same_path_is_found(self):
+        repo = make_repo({})
+        base = sh(repo, "rev-parse", "HEAD")
+        (repo / "backup.sql").write_text(DUMP)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "add")
+        (repo / "backup.sql").write_text("-- nothing here\n")
+        sh(repo, "commit", "-qam", "clean")
+        event = {"ref": "refs/heads/main", "before": base, "after": sh(repo, "rev-parse", "HEAD")}
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertIn("backup.sql", text)
+
     def test_a_push_whose_old_commits_are_gone_is_not_reported(self):
         repo = make_repo({"settings.php": "fine\n"})
         head = sh(repo, "rev-parse", "HEAD")
