@@ -390,6 +390,37 @@ class ScanTest(unittest.TestCase):
         self.assertIn("merge.sql", text)
         self.assert_value_hidden(done, text)
 
+    def test_a_secret_merged_in_from_the_base_is_not_the_pull_requests(self):
+        repo = make_repo({"f.txt": "a\n"})
+        sh(repo, "checkout", "-qb", "feature")
+        (repo / "g.txt").write_text("feature\n")
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "feature")
+        sh(repo, "checkout", "-q", "-")
+        (repo / "base.php").write_text(SECRET_LINE)
+        sh(repo, "add", "-A")
+        sh(repo, "commit", "-qm", "base")
+        # The pull request's base: the base branch's tip, as GitHub sends it.
+        base = sh(repo, "rev-parse", "HEAD")
+        sh(repo, "checkout", "-q", "feature")
+        sh(repo, "merge", "-q", "--no-edit", "-")
+        sh(repo, "rm", "-q", "base.php")
+        sh(repo, "commit", "-qm", "drop")
+        head = sh(repo, "rev-parse", "HEAD")
+        event = {"pull_request": {"number": 5, "base": {"sha": base}, "head": {"sha": head}}}
+        done, text = self.run_scan(repo, event=event)
+        self.assertEqual(done.returncode, 0, text)
+
+    def test_linked_still_reads_what_gitleaksignore_holds(self):
+        repo = make_repo({".gitleaksignore": SECRET_LINE})
+        Stub.answer = ["report"]
+        done, text = self.run_scan(repo, linked=True)
+        self.assertEqual(done.returncode, 1, text)
+        self.assertEqual(len(json.loads(Stub.seen[-1]["raw"])["findings"]), 1)
+        self.assertEqual((repo / ".gitleaksignore").read_text(), SECRET_LINE)
+        self.assertFalse((repo / ".gitleaksignore.sentinel-aside").exists())
+        self.assert_value_hidden(done, text)
+
     def test_a_dump_overwritten_at_the_same_path_is_found(self):
         repo = make_repo({})
         base = sh(repo, "rev-parse", "HEAD")

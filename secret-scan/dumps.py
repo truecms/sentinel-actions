@@ -803,9 +803,15 @@ def check(
             continue
         # A dump under any name is looked for in history too, as in the tree.
         named = _named(path)
-        # Every older version, newest first, until one is a dump: a dump
-        # overwritten at the same path, or still tracked under its name with
-        # other content today, stays in the history (#3578, #3608).
+        # A dump's name: every older version, newest first, so a dump
+        # overwritten at the same path or still tracked with other content
+        # stays found (#3578, #3608). Any other name: only the newest version
+        # of a path no longer in the tree, which keeps the check bounded.
+        if not named:
+            if path in tracked:
+                continue
+            versions = versions[:1]
+        first_test: Optional[tuple[str, str, int, tuple[Signs, Optional[str]]]] = None
         for commit, blob in versions:
             if blob == tracked.get(path):
                 continue
@@ -835,9 +841,19 @@ def check(
                 truncated = True
             if found is None:
                 continue
+            if classify(path, found[0], size, prefixes, web_root)[0] == CLASS_TEST:
+                # Keep looking: a newer test fixture must not hide an older
+                # dump of real data at the same path.
+                first_test = first_test or (commit, blob, size, found)
+                continue
+            first_test = None
             if not add(path, blob, size, found[0], found[1], commit):
                 stop = True
             break
+        if first_test is not None and not stop:
+            commit, blob, size, found = first_test
+            if not add(path, blob, size, found[0], found[1], commit):
+                stop = True
     return Result(dumps=dumps, truncated=truncated, withheld=withheld, unsafe=unsafe)
 
 
