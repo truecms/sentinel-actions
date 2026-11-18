@@ -385,7 +385,7 @@ def from_another_parent(repo: Path, row: dict[str, Any]) -> bool:
     return False
 
 
-def secrets_of(rows: list[dict[str, Any]], moved: Optional[str] = None) -> list[Secret]:
+def secrets_of(rows: list[dict[str, Any]]) -> list[Secret]:
     out: dict[tuple[Optional[str], str, str], Secret] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -397,9 +397,6 @@ def secrets_of(rows: list[dict[str, Any]], moved: Optional[str] = None) -> list[
         if rule and not RULE.match(rule):
             rule = None
         path = normalise(str(row.get("File") or ""))
-        if moved and path == moved:
-            # The repository's .gitleaksignore, read while it was renamed.
-            path = ".gitleaksignore"
         if value in path:
             # As Sentinel's scan: a path that holds the value is dropped.
             path = ""
@@ -570,8 +567,13 @@ def main() -> int:
                 for row in run_gitleaks(cfg, "git", ["--log-opts", opts])
                 if not (isinstance(row, dict) and from_another_parent(cfg.repo, row))
             ]
-            rows += run_gitleaks(cfg, "dir", [])
-        found = secrets_of(rows, moved)
+            tree = run_gitleaks(cfg, "dir", [])
+        # Only the tree pass reads the renamed file; history has real paths.
+        for row in tree:
+            if moved and isinstance(row, dict) and normalise(str(row.get("File") or "")) == moved:
+                row["File"] = ".gitleaksignore"
+        rows += tree
+        found = secrets_of(rows)
         del rows
         mask([s.value for s in found])
     except Stop as exc:
